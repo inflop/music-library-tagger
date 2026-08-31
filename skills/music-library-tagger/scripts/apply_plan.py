@@ -95,7 +95,14 @@ def within(base, rel):
     base = os.path.realpath(base)
     target = os.path.realpath(os.path.join(base, rel))
     n_base, n_target = os.path.normcase(base), os.path.normcase(target)
-    if n_target != n_base and not n_target.startswith(n_base + os.sep):
+    try:
+        # commonpath rather than a prefix test: a base that is a filesystem or
+        # drive root already ends with a separator, and appending another would
+        # match nothing.
+        if os.path.commonpath([n_base, n_target]) != n_base:
+            return None
+    except ValueError:
+        # Different drives, or a mix of absolute and relative paths.
         return None
     return target
 

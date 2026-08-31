@@ -352,6 +352,14 @@ class TestPathContainment(TempLibrary):
         out = self.craft(mutate)
         self.assertIn("refusing artwork path", out)
 
+    def test_a_base_that_is_a_filesystem_root_still_contains_its_children(self):
+        """A root already ends with a separator, so a prefix test matched nothing."""
+        drive = os.path.splitdrive(os.path.abspath(self.tmp))[0]
+        fs_root = drive + os.sep if drive else os.sep
+        rel = os.path.relpath(self.backup_dir, fs_root)
+        self.assertIsNotNone(apply_plan.within(fs_root, rel),
+                             "a path under the root was refused")
+
     @unittest.skipUnless(_symlinks_work(), "symlinks unavailable on this machine")
     def test_symlink_out_of_the_backup_folder_is_refused(self):
         """Containment resolves links, so one planted in the folder is not a way out."""
