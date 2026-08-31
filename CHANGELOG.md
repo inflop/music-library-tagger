@@ -33,6 +33,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   so restoring a v2.4 library silently downgraded it — and v2.3 cannot hold several
   values in one frame, so a multi-value artist came back joined with "/".
 
+- `--restore` no longer aborts on a damaged backup entry. A missing artwork path raised
+  `KeyError` and a non-integer picture type raised `TypeError`, either of which stopped the
+  run partway and left the library half reverted. Bad entries are now reported and stepped
+  over, and a file that fails is counted in the summary.
+
 ### Security
 - `--restore` refuses paths from a backup file that resolve outside the backup folder or the
   recorded root. An absolute or `..`-prefixed path could previously make it read an

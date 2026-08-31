@@ -311,6 +311,56 @@ def _symlinks_work():
         _s.rmtree(d, ignore_errors=True)
 
 
+class TestDamagedBackup(TempLibrary):
+    """A hand-edited backup must cost one entry, not the whole restore."""
+
+    def restore_with(self, mutate):
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        self.run_apply()
+        with open(self.backup, encoding="utf-8") as f:
+            data = json.load(f)
+        mutate(data)
+        with open(self.backup, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            apply_plan.restore(self.backup)
+        return buf.getvalue()
+
+    def test_artwork_entry_without_a_path_is_skipped(self):
+        def mutate(data):
+            first = data["files"][sorted(data["files"])[0]]
+            for entry in first["apic"]:
+                entry.pop("file")
+        out = self.restore_with(mutate)
+        self.assertIn("no usable path", out)
+        # the other track is still restored, tags and all
+        second = self.tags_of(self.tracks[1])
+        self.assertEqual(str(second["TALB"]), "old album name")
+        self.assertIsNotNone(self.artwork_of(self.tracks[1]))
+
+    def test_non_integer_picture_type_falls_back(self):
+        def mutate(data):
+            for info in data["files"].values():
+                for entry in info["apic"]:
+                    entry["type"] = "front"
+        self.restore_with(mutate)
+        for name in self.tracks:
+            pics = self.tags_of(name).getall("APIC")
+            self.assertEqual(len(pics), 1)
+            self.assertEqual(pics[0].type, 3)
+
+    def test_one_broken_entry_does_not_abort_the_others(self):
+        def mutate(data):
+            first = sorted(data["files"])[0]
+            data["files"][first]["frames"] = "not a mapping"
+        out = self.restore_with(mutate)
+        self.assertIn("could not restore", out)
+        self.assertIn("1 file(s) could not be restored", out)
+        self.assertEqual(str(self.tags_of(self.tracks[1])["TALB"]),
+                         "old album name")
+
+
 class TestPathContainment(TempLibrary):
     """Paths inside a backup file are data. They must not steer a restore."""
 

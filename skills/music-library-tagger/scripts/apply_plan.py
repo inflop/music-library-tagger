@@ -11,9 +11,11 @@ PRIV...) are neither backed up nor rewritten: apply() does not touch them and
 restore() leaves them in place. The exception is a non-text frame named in
 options.strip_frames -- deleting that is deliberate and cannot be undone.
 
-A restore writes the tag back in the ID3v2 version the file had. Note that
-ID3v2.3 cannot store several values in one frame, so writing a v2.3 tag joins
-them with "/" -- that is a property of the format, not of the backup, which
+A restore writes the tag back in the ID3v2 version the file had, as far as
+mutagen can write one: v2.3 or v2.4. A v2.2 tag is read but cannot be written
+back (apply() has already rewritten it as v2.3 by then), so it restores as v2.3.
+Note that ID3v2.3 cannot store several values in one frame, so writing a v2.3
+tag joins them with "/" -- a property of the format, not of the backup, which
 keeps the values apart.
 Only ID3 tags and artwork are touched -- the audio stream is never re-encoded.
 
@@ -230,6 +232,51 @@ def backup_tags(root, plan, backup_path):
         % (len(data["files"]), len(seen), backup_path))
 
 
+def restore_file(fpath, info, bdir):
+    """Rewrite one file from its backup entry; returns the artwork count."""
+    # Start from what is on disk and replace only what this tool manages: text
+    # frames and artwork. Frames it never wrote -- POPM ratings, UFID
+    # identifiers, USLT lyrics -- stay untouched instead of being wiped by a
+    # rebuild from scratch.
+    tags = load_id3(fpath)
+    for key in list(tags.keys()):
+        if isinstance(tags[key], TextFrame) or key.split(":")[0] == "APIC":
+            del tags[key]
+    for key, vals in (info.get("frames") or {}).items():
+        fr = rebuild_frame(key, vals)
+        if fr is not None:
+            tags.add(fr)
+
+    n_art = 0
+    for item in info.get("apic") or []:
+        # Every field here is data from a file a human may have edited. A bad
+        # entry costs its own image, never the rest of the restore.
+        name = item.get("file")
+        if not isinstance(name, str) or not name:
+            log("  !! artwork entry with no usable path, skipped")
+            continue
+        apath = within(bdir, name.replace("/", os.sep))
+        if apath is None:
+            log("  !! refusing artwork path outside the backup folder: %s" % name)
+            continue
+        if not os.path.isfile(apath):
+            log("  !! missing backup artwork: %s" % name)
+            continue
+        try:
+            pic_type = int(item.get("type", 3))
+        except (TypeError, ValueError):
+            pic_type = 3
+        with open(apath, "rb") as af:
+            tags.add(APIC(encoding=3, mime=item.get("mime") or "image/jpeg",
+                          type=pic_type, desc=item.get("desc") or "",
+                          data=af.read()))
+        n_art += 1
+
+    ver = info.get("id3_version")
+    tags.save(fpath, v2_version=ver if ver in (3, 4) else 3)
+    return n_art
+
+
 def restore(backup_path):
     with open(backup_path, encoding="utf-8") as f:
         data = json.load(f)
@@ -238,6 +285,7 @@ def restore(backup_path):
     n = 0
     n_art = 0
     legacy = 0
+    failed = 0
     for rel, info in data["files"].items():
         fpath = within(root, rel.replace("/", os.sep))
         if fpath is None:
@@ -245,45 +293,26 @@ def restore(backup_path):
             continue
         if not os.path.isfile(fpath):
             continue
-        # Start from what is on disk and replace only what this tool manages:
-        # text frames and artwork. Frames it never wrote -- POPM ratings, UFID
-        # identifiers, USLT lyrics -- stay untouched instead of being wiped by a
-        # rebuild from scratch.
-        tags = load_id3(fpath)
-        for key in list(tags.keys()):
-            if isinstance(tags[key], TextFrame) or key.split(":")[0] == "APIC":
-                del tags[key]
-        for key, vals in info["frames"].items():
-            fr = rebuild_frame(key, vals)
-            if fr is not None:
-                tags.add(fr)
-        art = info.get("apic")
-        if art is None and info.get("had_apic"):
+        if info.get("apic") is None and info.get("had_apic"):
             # Backup written before artwork was stored: the original image is not
             # recoverable, so say so instead of dropping it silently.
             legacy += 1
-        for item in art or []:
-            apath = within(bdir, item["file"].replace("/", os.sep))
-            if apath is None:
-                log("  !! refusing artwork path outside the backup folder: %s"
-                    % item["file"])
-                continue
-            if not os.path.isfile(apath):
-                log("  !! missing backup artwork: %s" % item["file"])
-                continue
-            with open(apath, "rb") as af:
-                tags.add(APIC(encoding=3, mime=item.get("mime") or "image/jpeg",
-                              type=item.get("type", 3), desc=item.get("desc", ""),
-                              data=af.read()))
-            n_art += 1
-        ver = info.get("id3_version")
-        tags.save(fpath, v2_version=ver if ver in (3, 4) else 3)
+        try:
+            n_art += restore_file(fpath, info, bdir)
+        except Exception as e:
+            # Undoing a run halfway is worse than skipping one file, so a damaged
+            # entry is reported and stepped over rather than aborting the rest.
+            failed += 1
+            log("  !! could not restore %s: %s: %s" % (rel, type(e).__name__, e))
+            continue
         n += 1
     log("Restored tags on %d files, %d artwork images reinstated "
         "(moved image files NOT reverted)." % (n, n_art))
     if legacy:
         log("  !! %d file(s) came from an old backup that stored no artwork -- "
             "their original embedded covers could not be restored." % legacy)
+    if failed:
+        log("  !! %d file(s) could not be restored -- see the lines above." % failed)
 
 
 # ------------------------------- apply -------------------------------
