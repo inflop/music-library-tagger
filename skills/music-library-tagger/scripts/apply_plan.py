@@ -107,12 +107,18 @@ def rebuild_frame(key, vals):
     if cls is None or not issubclass(cls, TextFrame):
         return None
     kw = {"encoding": 3, "text": vals}
+    # A descriptor may itself contain ":", so neither key can be split naively.
     if base == "TXXX":
-        kw["desc"] = rest.split(":")[0] if rest else ""
+        # Key is TXXX:<desc> -- everything after the frame id is the descriptor.
+        kw["desc"] = rest
     elif base == "COMM":
-        parts = rest.split(":") if rest else []
-        kw["desc"] = parts[0] if parts else ""
-        kw["lang"] = parts[1] if len(parts) > 1 else "eng"
+        # Key is COMM:<desc>:<lang>. Split from the right, and only believe the
+        # tail if it looks like a language code; otherwise it is part of desc.
+        desc, sep, lang = rest.rpartition(":")
+        if sep and len(lang) == 3:
+            kw["desc"], kw["lang"] = desc, lang
+        else:
+            kw["desc"], kw["lang"] = rest, "eng"
     try:
         return cls(**kw)
     except Exception:

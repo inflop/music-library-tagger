@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]
                        / "skills" / "music-library-tagger" / "scripts"))
 
 import apply_plan  # noqa: E402
-from mutagen.id3 import (ID3, APIC, POPM, TALB, TCOM, TIT2, TPUB, UFID,  # noqa: E402
-                         USLT)
+from mutagen.id3 import (ID3, APIC, COMM, POPM, TALB, TCOM, TIT2, TPUB,  # noqa: E402
+                         TXXX, UFID, USLT)
 from PIL import Image  # noqa: E402
 
 # Enough MPEG frame headers that mutagen accepts the file as audio.
@@ -228,6 +228,43 @@ class TestNonTextFrames(TempLibrary):
         with contextlib.redirect_stdout(io.StringIO()):
             apply_plan.restore(self.backup)
         self.assertNotIn("TRCK", self.tags_of(self.tracks[0]))
+
+
+class TestFrameDescriptors(TempLibrary):
+    """Descriptors may contain ':', which is also mutagen's key separator."""
+
+    def add_frames(self):
+        for name in self.tracks:
+            path = os.path.join(self.disc, name)
+            tags = ID3(path)
+            tags.add(TXXX(encoding=3, desc="Rating:WMP", text=["5"]))
+            tags.add(TXXX(encoding=3, desc="MusicBrainz Album Id", text=["m-1"]))
+            tags.add(COMM(encoding=3, lang="eng", desc="Songs-DB:Custom1",
+                          text=["note"]))
+            tags.save(path, v2_version=3)
+
+    def round_trip(self):
+        self.add_frames()
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        self.run_apply()
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.restore(self.backup)
+        return self.tags_of(self.tracks[0])
+
+    def test_txxx_descriptor_with_a_colon_is_not_truncated(self):
+        tags = self.round_trip()
+        self.assertIn("TXXX:Rating:WMP", tags)
+        self.assertEqual(tags["TXXX:Rating:WMP"].desc, "Rating:WMP")
+        self.assertEqual(tags["TXXX:MusicBrainz Album Id"].text, ["m-1"])
+
+    def test_comment_descriptor_with_a_colon_keeps_desc_and_language(self):
+        """Splitting from the left put 'Custom1' in lang, so the frame vanished."""
+        tags = self.round_trip()
+        key = "COMM:Songs-DB:Custom1:eng"
+        self.assertIn(key, tags)
+        self.assertEqual(tags[key].desc, "Songs-DB:Custom1")
+        self.assertEqual(tags[key].lang, "eng")
+        self.assertEqual(tags[key].text, ["note"])
 
 
 class TestPathContainment(TempLibrary):

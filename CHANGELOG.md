@@ -21,6 +21,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ID3()`, so `POPM` ratings and `UFID` identifiers — which `apply` never touches — were
   destroyed by undoing a run. It now replaces only text frames and artwork in the tag that
   is already on disk.
+- `--restore` keeps `TXXX` and `COMM` descriptors that contain a colon. Their mutagen keys
+  are `TXXX:<desc>` and `COMM:<desc>:<lang>`, and splitting on the first colon truncated the
+  descriptor — or, for a comment, shifted part of the description into the language field,
+  which made the frame fail to rebuild and vanish entirely.
 - Backup and restore skip non-text frames instead of mangling them. `USLT.text` is a string,
   so iterating it stored lyrics as a list of single characters; restoring that produced a
   lyrics frame reading `['w', 'e', 'r', ...]` with its language lost.
