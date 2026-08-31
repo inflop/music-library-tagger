@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-31
+
 ### Fixed
 - `--restore` now puts back the embedded cover art each file originally had. Previously the
   backup recorded only a `had_apic` flag and never the image bytes, so restoring stripped
