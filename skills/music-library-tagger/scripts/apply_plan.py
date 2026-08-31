@@ -85,6 +85,10 @@ def rp(root, rel):
 ART_EXT = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
            "image/gif": ".gif", "image/webp": ".webp"}
 
+# What analyze.py collects and apply() writes. A restore must not stray outside
+# it: mutagen will happily prepend an ID3 tag to any file it is handed.
+AUDIO_EXT = (".mp3",)
+
 
 def within(base, rel):
     """Resolve `rel` under `base`, or return None if it escapes.
@@ -306,6 +310,9 @@ def restore(backup_path):
         fpath = within(root, rel.replace("/", os.sep))
         if fpath is None:
             log("  !! refusing path outside the backup root: %s" % rel)
+            continue
+        if os.path.splitext(fpath)[1].lower() not in AUDIO_EXT:
+            log("  !! refusing a target that is not an MP3: %s" % rel)
             continue
         if not os.path.isfile(fpath):
             continue

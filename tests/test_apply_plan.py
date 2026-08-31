@@ -515,6 +515,22 @@ class TestPathContainment(TempLibrary):
         out = self.craft(mutate)
         self.assertIn("refusing artwork path", out)
 
+    def test_a_target_that_is_not_an_mp3_is_refused(self):
+        """mutagen writes an ID3 tag into whatever file it is handed."""
+        victim = os.path.join(self.root, "settings.cfg")
+        with open(victim, "wb") as f:
+            f.write(b"key = value")
+        with open(victim, "rb") as f:
+            original = f.read()
+
+        def mutate(data):
+            info = list(data["files"].values())[0]
+            data["files"] = {"settings.cfg": info}
+        out = self.craft(mutate)
+        self.assertIn("not an MP3", out)
+        with open(victim, "rb") as f:
+            self.assertEqual(f.read(), original, "a non-MP3 file was rewritten")
+
     def test_track_path_outside_the_root_is_refused(self):
         stray = os.path.join(self.tmp, "stray.mp3")
         with open(stray, "wb") as f:

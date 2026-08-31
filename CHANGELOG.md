@@ -44,7 +44,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 - `--restore` refuses paths from a backup file that resolve outside the backup folder or the
   recorded root. An absolute or `..`-prefixed path could previously make it read an
-  arbitrary local file and embed it as cover art. Paths are resolved through symlinks, so a
+  arbitrary local file and embed it as cover art. A target that is not an `.mp3` is refused
+  outright, so a backup entry cannot make mutagen prepend an ID3 tag to some other file. Paths are resolved through symlinks, so a
   link planted inside the backup folder is not a way out either, and containment is tested
   with `os.path.commonpath`, which a base that is a filesystem or drive root does not break.
 
