@@ -35,7 +35,9 @@ The skill's hard rule is that **no identifying data is written anywhere**:
 ## Reversibility
 
 `apply_plan.py` writes `.music-tagger/tags_backup_<timestamp>.json` containing every text
-tag of every file it is about to touch, **before** the first write. Embedded cover art is
+frame of every file it is about to touch, **before** the first write. Non-text frames
+(`POPM` ratings, `UFID` identifiers, `USLT` lyrics) are not backed up because nothing
+writes them: a restore leaves them exactly as they are. Embedded cover art is
 copied out alongside it into `tags_backup_<timestamp>_art/` (deduplicated by SHA-1, since
 one cover is normally repeated across every track of an album). Restore with:
 

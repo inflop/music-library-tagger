@@ -17,9 +17,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dry mode, so the preview always claimed `covers_embedded: 0`, hiding the one step that
   overwrites existing artwork.
 
+- `--restore` no longer wipes frames it never backed up. It rebuilt each tag from an empty
+  `ID3()`, so `POPM` ratings and `UFID` identifiers — which `apply` never touches — were
+  destroyed by undoing a run. It now replaces only text frames and artwork in the tag that
+  is already on disk.
+- Backup and restore skip non-text frames instead of mangling them. `USLT.text` is a string,
+  so iterating it stored lyrics as a list of single characters; restoring that produced a
+  lyrics frame reading `['w', 'e', 'r', ...]` with its language lost.
+
+### Security
+- `--restore` refuses paths from a backup file that resolve outside the backup folder or the
+  recorded root. An absolute or `..`-prefixed path could previously make it read an
+  arbitrary local file and embed it as cover art.
+
 ### Added
 - `tests/` — stdlib `unittest` round-trip suite (apply/restore fidelity, artwork
-  deduplication, dry-run parity), run in CI along with the runtime dependencies.
+  deduplication, dry-run parity, non-text frame preservation, path containment), run in CI
+  along with the runtime dependencies.
 
 ## [1.0.0] - 2026-08-30
 

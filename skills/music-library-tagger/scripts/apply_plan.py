@@ -2,9 +2,14 @@
 """
 Apply a tagging plan (plan.json) to an MP3 library, or restore from a backup.
 
-Always makes a full tag AND artwork backup BEFORE writing, so changes are
-reversible: embedded cover art is copied out to a sidecar folder next to the
-backup JSON and put back verbatim by --restore.
+Before writing, backs up every text frame and every embedded cover of the files
+it is about to touch, so --restore can undo the run. Artwork is copied out to a
+sidecar folder next to the backup JSON and re-embedded verbatim.
+
+Frames that are not text frames (POPM ratings, UFID identifiers, USLT lyrics,
+PRIV...) are neither backed up nor rewritten: apply() does not touch them and
+restore() leaves them in place. The exception is a non-text frame named in
+options.strip_frames -- deleting that is deliberate and cannot be undone.
 Only ID3 tags and artwork are touched -- the audio stream is never re-encoded.
 
 Usage:
@@ -50,8 +55,8 @@ plan.json schema (all paths are RELATIVE to "root", forward slashes ok):
 import os, sys, io, json, time, argparse, shutil, hashlib
 
 from mutagen.mp3 import MP3
-from mutagen.id3 import (ID3, ID3NoHeaderError, Frames, TALB, TPE1, TPE2, TIT2,
-                         TCON, TDRC, TRCK, TPOS, APIC)
+from mutagen.id3 import (ID3, ID3NoHeaderError, Frames, TextFrame, TALB, TPE1,
+                         TPE2, TIT2, TCON, TDRC, TRCK, TPOS, APIC)
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
@@ -72,6 +77,23 @@ ART_EXT = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
            "image/gif": ".gif", "image/webp": ".webp"}
 
 
+def within(base, rel):
+    """Resolve `rel` under `base`, or return None if it escapes.
+
+    Paths in a backup file are data, not instructions: an absolute path would
+    make os.path.join discard `base` entirely, and `..` would walk out of it.
+    Neither should be able to steer a restore at the rest of the filesystem.
+    """
+    if not rel:
+        return None
+    base = os.path.abspath(base)
+    target = os.path.abspath(os.path.join(base, rel))
+    n_base, n_target = os.path.normcase(base), os.path.normcase(target)
+    if n_target != n_base and not n_target.startswith(n_base + os.sep):
+        return None
+    return target
+
+
 def rebuild_frame(key, vals):
     """Recreate a text frame from its backup key and values.
 
@@ -80,7 +102,9 @@ def rebuild_frame(key, vals):
     """
     base, _, rest = key.partition(":")
     cls = Frames.get(base)
-    if cls is None:
+    # Only genuine text frames take a list of strings. USLT.text, for one, is a
+    # plain string -- feeding it a list yields lyrics that read "['w', 'e', ...".
+    if cls is None or not issubclass(cls, TextFrame):
         return None
     kw = {"encoding": 3, "text": vals}
     if base == "TXXX":
@@ -160,6 +184,12 @@ def backup_tags(root, plan, backup_path):
                             "desc": getattr(fr, "desc", "") or "",
                         })
                         continue
+                    if not isinstance(fr, TextFrame):
+                        # POPM/UFID/USLT/PRIV: iterating .text would mangle them
+                        # (USLT.text is a string, so it splits into characters).
+                        # apply() never writes them and restore() leaves them
+                        # alone, so they need no backup.
+                        continue
                     try:
                         frames[key] = [str(x) for x in fr.text]
                     except Exception:
@@ -181,10 +211,20 @@ def restore(backup_path):
     n_art = 0
     legacy = 0
     for rel, info in data["files"].items():
-        fpath = os.path.join(root, rel.replace("/", os.sep))
+        fpath = within(root, rel.replace("/", os.sep))
+        if fpath is None:
+            log("  !! refusing path outside the backup root: %s" % rel)
+            continue
         if not os.path.isfile(fpath):
             continue
-        tags = ID3()
+        # Start from what is on disk and replace only what this tool manages:
+        # text frames and artwork. Frames it never wrote -- POPM ratings, UFID
+        # identifiers, USLT lyrics -- stay untouched instead of being wiped by a
+        # rebuild from scratch.
+        tags = load_id3(fpath)
+        for key in list(tags.keys()):
+            if isinstance(tags[key], TextFrame) or key.split(":")[0] == "APIC":
+                del tags[key]
         for key, vals in info["frames"].items():
             fr = rebuild_frame(key, vals)
             if fr is not None:
@@ -195,7 +235,11 @@ def restore(backup_path):
             # recoverable, so say so instead of dropping it silently.
             legacy += 1
         for item in art or []:
-            apath = os.path.join(bdir, item["file"].replace("/", os.sep))
+            apath = within(bdir, item["file"].replace("/", os.sep))
+            if apath is None:
+                log("  !! refusing artwork path outside the backup folder: %s"
+                    % item["file"])
+                continue
             if not os.path.isfile(apath):
                 log("  !! missing backup artwork: %s" % item["file"])
                 continue

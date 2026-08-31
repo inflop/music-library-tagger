@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]
                        / "skills" / "music-library-tagger" / "scripts"))
 
 import apply_plan  # noqa: E402
-from mutagen.id3 import ID3, APIC, TALB, TCOM, TIT2, TPUB  # noqa: E402
+from mutagen.id3 import (ID3, APIC, POPM, TALB, TCOM, TIT2, TPUB, UFID,  # noqa: E402
+                         USLT)
 from PIL import Image  # noqa: E402
 
 # Enough MPEG frame headers that mutagen accepts the file as audio.
@@ -46,6 +47,7 @@ class TempLibrary(unittest.TestCase):
 
     ORIGINAL = (200, 0, 0)
     REPLACEMENT = (0, 160, 0)
+    LYRICS = "wers pierwszy\nwers drugi"
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mlt-test-")
@@ -67,6 +69,12 @@ class TempLibrary(unittest.TestCase):
             tags.add(TPUB(encoding=3, text=["Island Records"]))
             tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Front",
                           data=art))
+            # Frames the tool never writes: they must come through a round trip
+            # untouched rather than be wiped or mangled.
+            tags.add(USLT(encoding=3, lang="eng", desc="",
+                          text=self.LYRICS))
+            tags.add(POPM(email="rating@example.com", rating=196, count=3))
+            tags.add(UFID(owner="http://musicbrainz.org", data=b"mbid-123"))
             tags.save(path, v2_version=3)
 
         self.new_cover = os.path.join(self.disc, "new_cover.jpg")
@@ -175,6 +183,106 @@ class TestRestoreFidelity(TempLibrary):
         with contextlib.redirect_stdout(buf):
             apply_plan.restore(self.backup)
         self.assertIn("could not be restored", buf.getvalue())
+
+
+class TestNonTextFrames(TempLibrary):
+    """apply() never writes these, so restore() must not destroy them."""
+
+    def test_rating_and_identifier_survive_a_restore(self):
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        self.run_apply()
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.restore(self.backup)
+
+        tags = self.tags_of(self.tracks[0])
+        self.assertEqual(tags["POPM:rating@example.com"].rating, 196)
+        self.assertEqual(tags["UFID:http://musicbrainz.org"].data, b"mbid-123")
+
+    def test_lyrics_come_back_verbatim(self):
+        """USLT.text is a string; iterating it would store it character by character."""
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        self.run_apply()
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.restore(self.backup)
+
+        tags = self.tags_of(self.tracks[0])
+        key = [k for k in tags.keys() if k.startswith("USLT")][0]
+        self.assertEqual(key, "USLT::eng", "the language tag was lost")
+        self.assertEqual(tags[key].text, self.LYRICS)
+
+    def test_non_text_frames_are_not_written_to_the_backup(self):
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        with open(self.backup, encoding="utf-8") as f:
+            data = json.load(f)
+        keys = list(data["files"].values())[0]["frames"]
+        for unwanted in ("USLT::eng", "POPM:rating@example.com"):
+            self.assertNotIn(unwanted, keys)
+
+    def test_restore_drops_text_frames_the_tool_added(self):
+        """Merging into the existing tag must not leave the tool's own frames behind."""
+        self.assertNotIn("TRCK", self.tags_of(self.tracks[0]))
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        self.run_apply()
+        self.assertIn("TRCK", self.tags_of(self.tracks[0]))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.restore(self.backup)
+        self.assertNotIn("TRCK", self.tags_of(self.tracks[0]))
+
+
+class TestPathContainment(TempLibrary):
+    """Paths inside a backup file are data. They must not steer a restore."""
+
+    def craft(self, mutate):
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        with open(self.backup, encoding="utf-8") as f:
+            data = json.load(f)
+        mutate(data)
+        with open(self.backup, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            apply_plan.restore(self.backup)
+        return buf.getvalue()
+
+    def test_artwork_path_outside_the_backup_folder_is_refused(self):
+        outside = os.path.join(self.tmp, "outside.jpg")
+        with open(outside, "wb") as f:
+            f.write(jpeg((7, 7, 7)))
+
+        def mutate(data):
+            for info in data["files"].values():
+                info["apic"] = [{"sha1": "x", "file": "../../outside.jpg",
+                                 "mime": "image/jpeg", "type": 3, "desc": "F"}]
+        out = self.craft(mutate)
+        self.assertIn("refusing artwork path", out)
+        self.assertIsNone(self.artwork_of(self.tracks[0]),
+                          "artwork from outside the backup folder was embedded")
+
+    def test_absolute_artwork_path_is_refused(self):
+        outside = os.path.join(self.tmp, "outside.jpg")
+        with open(outside, "wb") as f:
+            f.write(jpeg((7, 7, 7)))
+
+        def mutate(data):
+            for info in data["files"].values():
+                info["apic"] = [{"sha1": "x", "file": outside.replace("\\", "/"),
+                                 "mime": "image/jpeg", "type": 3, "desc": "F"}]
+        out = self.craft(mutate)
+        self.assertIn("refusing artwork path", out)
+
+    def test_track_path_outside_the_root_is_refused(self):
+        stray = os.path.join(self.tmp, "stray.mp3")
+        with open(stray, "wb") as f:
+            f.write(MP3_BYTES)
+        ID3().save(stray, v2_version=3)
+
+        def mutate(data):
+            info = list(data["files"].values())[0]
+            data["files"] = {"../stray.mp3": info}
+        out = self.craft(mutate)
+        self.assertIn("refusing path outside the backup root", out)
+        self.assertNotIn("TALB", ID3(stray))
 
 
 class TestDryRun(TempLibrary):
