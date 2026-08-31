@@ -1,0 +1,4 @@
+# Runtime dependencies for the helper scripts in
+# skills/music-library-tagger/scripts/
+mutagen>=1.45   # read/write ID3 tags (required)
+Pillow>=9.0     # image dimensions + clean JPEG re-encode (required for cover work)

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "music-tools",
+  "description": "Skills and plugins for organizing self-hosted music libraries.",
+  "version": "1.0.0",
+  "owner": {
+    "name": "Rafał Klepacz",
+    "url": "https://github.com/inflop"
+  },
+  "plugins": [
+    {
+      "name": "music-library-tagger",
+      "displayName": "Music Library Tagger",
+      "source": "./",
+      "description": "Clean up an artist's MP3/ID3 album collection for Navidrome, Plex, Jellyfin or Subsonic: canonical album titles, correct release years, track titles, genres, multi-disc numbering, album artist and cover art (embedded + cover.jpg), verified against MusicBrainz and the Cover Art Archive. Analyzes, asks a few decisions, writes a reviewable Markdown plan, applies it reversibly with a full tag backup.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Rafał Klepacz",
+        "url": "https://github.com/inflop"
+      },
+      "homepage": "https://github.com/inflop/music-library-tagger",
+      "repository": "https://github.com/inflop/music-library-tagger",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": [
+        "music",
+        "mp3",
+        "id3",
+        "metadata",
+        "cover-art",
+        "navidrome",
+        "plex",
+        "jellyfin",
+        "musicbrainz"
+      ],
+      "tags": [
+        "music",
+        "id3-tags",
+        "cover-art",
+        "navidrome",
+        "musicbrainz",
+        "media-library"
+      ],
+      "strict": true,
+      "defaultEnabled": true
+    }
+  ]
+}

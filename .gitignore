@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Artifacts produced by the skill inside a user's music folder -- never commit
+.music-tagger/
+PLAN-TAGI.md
+*.mp3
+*.jpg
+*.jpeg
+*.png
+!docs/img/*.png
+!docs/img/*.jpg

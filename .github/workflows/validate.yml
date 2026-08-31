@@ -1,0 +1,50 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Manifests are valid JSON
+        run: |
+          python -c "import json; json.load(open('.claude-plugin/plugin.json'))"
+          python -c "import json; json.load(open('.claude-plugin/marketplace.json'))"
+
+      - name: Skill has valid frontmatter and matching name
+        run: |
+          python - <<'PY'
+          import re, pathlib, sys
+          for d in pathlib.Path("skills").iterdir():
+              p = d / "SKILL.md"
+              assert p.is_file(), f"{d} has no SKILL.md"
+              text = p.read_text(encoding="utf-8")
+              m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+              assert m, f"{p} has no YAML frontmatter"
+              fm = m.group(1)
+              name = re.search(r"^name:\s*(\S+)", fm, re.M)
+              assert name, f"{p} has no name:"
+              assert name.group(1) == d.name, f"{p} name {name.group(1)!r} != folder {d.name!r}"
+              assert re.search(r"^description:", fm, re.M), f"{p} has no description:"
+          print("skills ok")
+          PY
+
+      - name: Scripts compile
+        run: python -m compileall -q skills/
+
+      - name: No placeholders left unreplaced
+        run: |
+          if grep -rq 'YOUR_GITHUB_USERNAME\|YOUR_NAME' --exclude-dir=.git --exclude-dir=.github .; then
+            echo "::error::placeholders still present - run tools/personalize.sh"
+            grep -rn 'YOUR_GITHUB_USERNAME\|YOUR_NAME' --exclude-dir=.git --exclude-dir=.github .
+            exit 1
+          fi
