@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]
 import apply_plan  # noqa: E402
 from mutagen.id3 import (ID3, APIC, COMM, POPM, TALB, TCOM, TIT2, TPE1,  # noqa: E402
                          TPUB, TXXX, UFID, USLT)
+from mutagen.mp3 import MP3  # noqa: E402
 from PIL import Image  # noqa: E402
 
 # Enough MPEG frame headers that mutagen accepts the file as audio.
@@ -309,6 +310,64 @@ def _symlinks_work():
     finally:
         import shutil as _s
         _s.rmtree(d, ignore_errors=True)
+
+
+class TestTagLayout(unittest.TestCase):
+    """A restore should leave the file shaped the way it found it."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mlt-layout-")
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp,
+                                                            ignore_errors=True))
+        self.root = os.path.join(self.tmp, "Band")
+        self.disc = os.path.join(self.root, "Album")
+        os.makedirs(self.disc)
+        self.path = os.path.join(self.disc, "01.mp3")
+        with open(self.path, "wb") as f:
+            f.write(MP3_BYTES)
+        self.backup = os.path.join(self.tmp, "backup.json")
+
+    def plan(self):
+        return {"root": self.root,
+                "options": {"cover_embed": False, "cover_folder_jpg": False},
+                "albums": [{"album": "Red", "year": 1974, "discs": [
+                    {"path": "Album", "tracks": [
+                        {"file": "01.mp3", "track": 1, "title": "Red"}]}]}]}
+
+    def cycle(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.backup_tags(self.root, self.plan(), self.backup)
+            apply_plan.apply(self.plan(), False)
+            apply_plan.restore(self.backup)
+
+    def has_v2(self):
+        with open(self.path, "rb") as f:
+            return f.read(3) == b"ID3"
+
+    def has_v1(self):
+        with open(self.path, "rb") as f:
+            f.seek(-128, os.SEEK_END)
+            return f.read(3) == b"TAG"
+
+    def test_a_file_that_had_no_tag_ends_up_with_no_tag(self):
+        self.assertFalse(self.has_v2())
+        self.cycle()
+        self.assertFalse(self.has_v2(), "restore left an empty ID3v2 tag behind")
+        self.assertGreater(MP3(self.path).info.length, 0, "audio was damaged")
+
+    def test_a_v1_only_file_keeps_v1_and_gains_no_v2(self):
+        tags = ID3()
+        tags.add(TALB(encoding=3, text=["stary album"]))
+        tags.save(self.path, v1=2, v2_version=3)
+        tags.delete(self.path, delete_v1=False, delete_v2=True)
+        self.assertTrue(self.has_v1())
+        self.assertFalse(self.has_v2())
+
+        self.cycle()
+
+        self.assertTrue(self.has_v1(), "the ID3v1 tag was lost")
+        self.assertFalse(self.has_v2(), "restore added an ID3v2 tag it never had")
+        self.assertEqual(str(ID3(self.path)["TALB"]), "stary album")
 
 
 class TestDamagedBackup(TempLibrary):

@@ -14,6 +14,8 @@ options.strip_frames -- deleting that is deliberate and cannot be undone.
 A restore writes the tag back in the ID3v2 version the file had, as far as
 mutagen can write one: v2.3 or v2.4. A v2.2 tag is read but cannot be written
 back (apply() has already rewritten it as v2.3 by then), so it restores as v2.3.
+A file that had no ID3v2 tag ends up with none again rather than an empty one,
+and a file that had only ID3v1 keeps just its ID3v1.
 Note that ID3v2.3 cannot store several values in one frame, so writing a v2.3
 tag joins them with "/" -- a property of the format, not of the backup, which
 keeps the values apart.
@@ -273,7 +275,18 @@ def restore_file(fpath, info, bdir):
         n_art += 1
 
     ver = info.get("id3_version")
-    tags.save(fpath, v2_version=ver if ver in (3, 4) else 3)
+    if ver is None and not tags:
+        # The file carried no ID3 tag at all before the run. Leave it that way
+        # instead of parking an empty tag and its padding on it. An ID3v1 tag,
+        # if one somehow exists, is never this tool's to remove.
+        tags.delete(fpath, delete_v1=False, delete_v2=True)
+    elif ver == 1:
+        # ID3v1 only: write the frames back as v1, then take away the v2 tag
+        # apply() added, so the file ends up shaped as it started.
+        tags.save(fpath, v1=2, v2_version=3)
+        tags.delete(fpath, delete_v1=False, delete_v2=True)
+    else:
+        tags.save(fpath, v2_version=ver if ver in (3, 4) else 3)
     return n_art
 
 
