@@ -10,6 +10,11 @@ Frames that are not text frames (POPM ratings, UFID identifiers, USLT lyrics,
 PRIV...) are neither backed up nor rewritten: apply() does not touch them and
 restore() leaves them in place. The exception is a non-text frame named in
 options.strip_frames -- deleting that is deliberate and cannot be undone.
+
+A restore writes the tag back in the ID3v2 version the file had. Note that
+ID3v2.3 cannot store several values in one frame, so writing a v2.3 tag joins
+them with "/" -- that is a property of the format, not of the backup, which
+keeps the values apart.
 Only ID3 tags and artwork are touched -- the audio stream is never re-encoded.
 
 Usage:
@@ -86,8 +91,9 @@ def within(base, rel):
     """
     if not rel:
         return None
-    base = os.path.abspath(base)
-    target = os.path.abspath(os.path.join(base, rel))
+    # realpath, not abspath: a symlink inside the folder must not be a way out.
+    base = os.path.realpath(base)
+    target = os.path.realpath(os.path.join(base, rel))
     n_base, n_target = os.path.normcase(base), os.path.normcase(target)
     if n_target != n_base and not n_target.startswith(n_base + os.sep):
         return None
@@ -164,7 +170,15 @@ def backup_tags(root, plan, backup_path):
                 fpath = os.path.join(dpath, tr["file"])
                 if not os.path.isfile(fpath):
                     continue
-                tags = load_id3(fpath)
+                try:
+                    tags = ID3(fpath)
+                    # Remember the tag version so a restore does not quietly
+                    # rewrite a v2.4 library as v2.3 (which cannot hold multiple
+                    # values per frame and would join them with "/").
+                    id3v = tags.version[1]
+                except ID3NoHeaderError:
+                    tags = ID3()
+                    id3v = None
                 frames = {}
                 art = []
                 for key in list(tags.keys()):
@@ -201,7 +215,8 @@ def backup_tags(root, plan, backup_path):
                     except Exception:
                         pass
                 data["files"][os.path.relpath(fpath, root).replace("\\", "/")] = {
-                    "frames": frames, "had_apic": bool(art), "apic": art}
+                    "frames": frames, "had_apic": bool(art), "apic": art,
+                    "id3_version": id3v}
     with open(backup_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
     log("Backup of %d files (%d distinct artwork images) -> %s"
@@ -254,7 +269,8 @@ def restore(backup_path):
                               type=item.get("type", 3), desc=item.get("desc", ""),
                               data=af.read()))
             n_art += 1
-        tags.save(fpath, v2_version=3)
+        ver = info.get("id3_version")
+        tags.save(fpath, v2_version=ver if ver in (3, 4) else 3)
         n += 1
     log("Restored tags on %d files, %d artwork images reinstated "
         "(moved image files NOT reverted)." % (n, n_art))

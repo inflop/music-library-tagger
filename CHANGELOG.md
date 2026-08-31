@@ -29,10 +29,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   so iterating it stored lyrics as a list of single characters; restoring that produced a
   lyrics frame reading `['w', 'e', 'r', ...]` with its language lost.
 
+- `--restore` writes the tag back in the ID3v2 version the file had. It always saved v2.3,
+  so restoring a v2.4 library silently downgraded it — and v2.3 cannot hold several
+  values in one frame, so a multi-value artist came back joined with "/".
+
 ### Security
 - `--restore` refuses paths from a backup file that resolve outside the backup folder or the
   recorded root. An absolute or `..`-prefixed path could previously make it read an
-  arbitrary local file and embed it as cover art.
+  arbitrary local file and embed it as cover art. Paths are resolved through symlinks, so a
+  link planted inside the backup folder is not a way out either.
 
 ### Added
 - `tests/` — stdlib `unittest` round-trip suite (apply/restore fidelity, artwork

@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]
                        / "skills" / "music-library-tagger" / "scripts"))
 
 import apply_plan  # noqa: E402
-from mutagen.id3 import (ID3, APIC, COMM, POPM, TALB, TCOM, TIT2, TPUB,  # noqa: E402
-                         TXXX, UFID, USLT)
+from mutagen.id3 import (ID3, APIC, COMM, POPM, TALB, TCOM, TIT2, TPE1,  # noqa: E402
+                         TPUB, TXXX, UFID, USLT)
 from PIL import Image  # noqa: E402
 
 # Enough MPEG frame headers that mutagen accepts the file as audio.
@@ -48,6 +48,8 @@ class TempLibrary(unittest.TestCase):
     ORIGINAL = (200, 0, 0)
     REPLACEMENT = (0, 160, 0)
     LYRICS = "wers pierwszy\nwers drugi"
+    ID3_VERSION = 3
+    ARTISTS = ["Artysta A", "Artysta B"]
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mlt-test-")
@@ -75,7 +77,8 @@ class TempLibrary(unittest.TestCase):
                           text=self.LYRICS))
             tags.add(POPM(email="rating@example.com", rating=196, count=3))
             tags.add(UFID(owner="http://musicbrainz.org", data=b"mbid-123"))
-            tags.save(path, v2_version=3)
+            tags.add(TPE1(encoding=3, text=self.ARTISTS))
+            tags.save(path, v2_version=self.ID3_VERSION)
 
         self.new_cover = os.path.join(self.disc, "new_cover.jpg")
         with open(self.new_cover, "wb") as f:
@@ -94,7 +97,8 @@ class TempLibrary(unittest.TestCase):
         return {
             "root": self.root,
             "options": {"cover_embed": True, "cover_folder_jpg": True,
-                        "cover_max_px": 1400},
+                        "cover_max_px": 1400,
+                        "id3_version": self.ID3_VERSION},
             "albums": [{
                 "album": "Red", "year": 1974, "album_path": "1974 - Red",
                 "discs": [{
@@ -267,6 +271,46 @@ class TestFrameDescriptors(TempLibrary):
         self.assertEqual(tags[key].text, ["note"])
 
 
+class TestId3Version(TempLibrary):
+    """A restore must not quietly rewrite a v2.4 library as v2.3."""
+
+    ID3_VERSION = 4
+
+    def test_restore_keeps_the_tag_version(self):
+        path = os.path.join(self.disc, self.tracks[0])
+        self.assertEqual(ID3(path).version[1], 4)
+
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        self.run_apply()
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.restore(self.backup)
+
+        self.assertEqual(ID3(path).version[1], 4)
+
+    def test_multi_value_frame_keeps_its_values(self):
+        """v2.3 joins values with '/'; v2.4 keeps them, so the version matters."""
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        self.run_apply()
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.restore(self.backup)
+
+        self.assertEqual(list(self.tags_of(self.tracks[0])["TPE1"].text),
+                         self.ARTISTS)
+
+
+def _symlinks_work():
+    import tempfile as _t
+    d = _t.mkdtemp()
+    try:
+        os.symlink(os.path.join(d, "target"), os.path.join(d, "link"))
+        return True
+    except (OSError, NotImplementedError, AttributeError):
+        return False
+    finally:
+        import shutil as _s
+        _s.rmtree(d, ignore_errors=True)
+
+
 class TestPathContainment(TempLibrary):
     """Paths inside a backup file are data. They must not steer a restore."""
 
@@ -305,6 +349,24 @@ class TestPathContainment(TempLibrary):
             for info in data["files"].values():
                 info["apic"] = [{"sha1": "x", "file": outside.replace("\\", "/"),
                                  "mime": "image/jpeg", "type": 3, "desc": "F"}]
+        out = self.craft(mutate)
+        self.assertIn("refusing artwork path", out)
+
+    @unittest.skipUnless(_symlinks_work(), "symlinks unavailable on this machine")
+    def test_symlink_out_of_the_backup_folder_is_refused(self):
+        """Containment resolves links, so one planted in the folder is not a way out."""
+        outside = os.path.join(self.tmp, "outside.jpg")
+        with open(outside, "wb") as f:
+            f.write(jpeg((7, 7, 7)))
+        art_dir = os.path.splitext(self.backup)[0] + "_art"
+        os.makedirs(art_dir, exist_ok=True)
+        os.symlink(outside, os.path.join(art_dir, "link.jpg"))
+        rel = os.path.basename(art_dir) + "/link.jpg"
+
+        def mutate(data):
+            for info in data["files"].values():
+                info["apic"] = [{"sha1": "x", "file": rel, "mime": "image/jpeg",
+                                 "type": 3, "desc": "F"}]
         out = self.craft(mutate)
         self.assertIn("refusing artwork path", out)
 
