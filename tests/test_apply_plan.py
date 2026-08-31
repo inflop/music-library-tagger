@@ -355,11 +355,19 @@ class TestTagLayout(unittest.TestCase):
         self.assertFalse(self.has_v2(), "restore left an empty ID3v2 tag behind")
         self.assertGreater(MP3(self.path).info.length, 0, "audio was damaged")
 
-    def test_a_v1_only_file_keeps_v1_and_gains_no_v2(self):
+    def make_v1_only(self, album):
         tags = ID3()
-        tags.add(TALB(encoding=3, text=["stary album"]))
+        tags.add(TALB(encoding=3, text=[album]))
         tags.save(self.path, v1=2, v2_version=3)
         tags.delete(self.path, delete_v1=False, delete_v2=True)
+
+    def v1_album(self):
+        with open(self.path, "rb") as f:
+            f.seek(-128, os.SEEK_END)
+            return f.read(128)[63:93].rstrip(bytes([0]) + b" ").decode("latin-1")
+
+    def test_a_v1_only_file_keeps_v1_and_gains_no_v2(self):
+        self.make_v1_only("stary album")
         self.assertTrue(self.has_v1())
         self.assertFalse(self.has_v2())
 
@@ -368,6 +376,26 @@ class TestTagLayout(unittest.TestCase):
         self.assertTrue(self.has_v1(), "the ID3v1 tag was lost")
         self.assertFalse(self.has_v2(), "restore added an ID3v2 tag it never had")
         self.assertEqual(str(ID3(self.path)["TALB"]), "stary album")
+
+    def test_restoring_v1_needs_more_than_deleting_the_added_v2_tag(self):
+        """apply() rewrites the v1 fields, so restore must write v1 back.
+
+        mutagen's save() defaults to v1=1 -- update the v1 tag if present -- so
+        dropping the v2 tag alone would leave apply()'s values in v1 and revert
+        nothing. This test exists to stop that simplification.
+        """
+        self.make_v1_only("stary album")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.backup_tags(self.root, self.plan(), self.backup)
+            apply_plan.apply(self.plan(), False)
+        self.assertEqual(self.v1_album(), "Red",
+                         "apply() was expected to rewrite the v1 fields")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.restore(self.backup)
+        self.assertEqual(self.v1_album(), "stary album",
+                         "restore left apply()'s value in the v1 tag")
 
 
 class TestDamagedBackup(TempLibrary):

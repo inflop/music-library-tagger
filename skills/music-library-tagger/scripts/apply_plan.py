@@ -281,8 +281,11 @@ def restore_file(fpath, info, bdir):
         # if one somehow exists, is never this tool's to remove.
         tags.delete(fpath, delete_v1=False, delete_v2=True)
     elif ver == 1:
-        # ID3v1 only: write the frames back as v1, then take away the v2 tag
-        # apply() added, so the file ends up shaped as it started.
+        # ID3v1 only. Both steps are needed. mutagen's save() defaults to v1=1,
+        # "update the v1 tag if one is present", so apply() has already rewritten
+        # the v1 fields with its own values -- deleting the added v2 tag alone
+        # would leave those in place and revert nothing. Write v1 back from the
+        # backup first, then take the v2 tag away.
         tags.save(fpath, v1=2, v2_version=3)
         tags.delete(fpath, delete_v1=False, delete_v2=True)
     else:
