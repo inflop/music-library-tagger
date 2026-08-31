@@ -43,8 +43,8 @@ jobs:
 
       - name: No placeholders left unreplaced
         run: |
-          if grep -rq 'YOUR_GITHUB_USERNAME\|YOUR_NAME' --exclude-dir=.git --exclude-dir=.github .; then
+          if grep -rq 'YOUR_GITHUB_USERNAME\|YOUR_NAME' --exclude-dir=.git --exclude-dir=.github --exclude-dir=tools .; then
             echo "::error::placeholders still present - run tools/personalize.sh"
-            grep -rn 'YOUR_GITHUB_USERNAME\|YOUR_NAME' --exclude-dir=.git --exclude-dir=.github .
+            grep -rn 'YOUR_GITHUB_USERNAME\|YOUR_NAME' --exclude-dir=.git --exclude-dir=.github --exclude-dir=tools .
             exit 1
           fi
