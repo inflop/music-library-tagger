@@ -19,7 +19,9 @@ music server (Navidrome, Plex, Jellyfin, Subsonic…) displays correctly.
 
 **Golden rules**
 - **Never touch the audio stream** — only ID3 tags and artwork.
-- **Always back up first** (`apply_plan.py` writes a full text-tag backup before any change).
+- **Always back up first** (`apply_plan.py` backs up every text frame and every embedded
+  cover before any change, so a restore brings back the user's original covers too;
+  ratings, lyrics and other non-text frames are left untouched rather than rewritten).
 - **Verify against public sources** — don't trust existing tags or folder names blindly.
 - **Privacy**: never write personally identifying data (name, email, username, local
   paths) into tags, `cover.jpg`, filenames, or image metadata. Web requests use a
@@ -125,6 +127,8 @@ Re-run `analyze.py` and confirm names/years/discs/covers are consistent. Tell th
 ## Restore
 
 `python "$SKILL/scripts/apply_plan.py" --restore "<ROOT>/.music-tagger/tags_backup_<ts>.json"`
-reverts text tags and removes tool-added artwork. (Copied/moved image files and `cover.jpg`
-are logged but not auto-deleted — remove them manually if needed. Prefer
-`move_images_mode: "copy"` unless the user explicitly wants files moved.)
+reverts text tags and re-embeds the artwork each file originally had, read from the
+`tags_backup_<ts>_art/` folder written next to the backup — keep the two together.
+(Copied/moved image files and `cover.jpg` are logged but not auto-deleted — remove them
+manually if needed. Prefer `move_images_mode: "copy"` unless the user explicitly wants
+files moved.)

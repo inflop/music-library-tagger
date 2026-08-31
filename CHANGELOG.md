@@ -4,6 +4,56 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `--restore` now puts back the embedded cover art each file originally had. Previously the
+  backup recorded only a `had_apic` flag and never the image bytes, so restoring stripped
+  the user's own artwork along with the tool's — irreversibly.
+- `--restore` no longer drops frames it had itself backed up. It rebuilt tags from a
+  hand-kept map of eight frame classes, silently discarding everything else (`TCOM`,
+  `TPUB`, `TOPE`, `TXXX`—); it now uses mutagen's own frame registry.
+- `--dry-run` reports the cover work it would do. Cover processing was skipped wholesale in
+  dry mode, so the preview always claimed `covers_embedded: 0`, hiding the one step that
+  overwrites existing artwork.
+
+- `--restore` no longer wipes frames it never backed up. It rebuilt each tag from an empty
+  `ID3()`, so `POPM` ratings and `UFID` identifiers — which `apply` never touches — were
+  destroyed by undoing a run. It now replaces only text frames and artwork in the tag that
+  is already on disk.
+- `--restore` keeps `TXXX` and `COMM` descriptors that contain a colon. Their mutagen keys
+  are `TXXX:<desc>` and `COMM:<desc>:<lang>`, and splitting on the first colon truncated the
+  descriptor — or, for a comment, shifted part of the description into the language field,
+  which made the frame fail to rebuild and vanish entirely.
+- Backup and restore skip non-text frames instead of mangling them. `USLT.text` is a string,
+  so iterating it stored lyrics as a list of single characters; restoring that produced a
+  lyrics frame reading `['w', 'e', 'r', ...]` with its language lost.
+
+- `--restore` writes the tag back in the ID3v2 version the file had. It always saved v2.3,
+  so restoring a v2.4 library silently downgraded it — and v2.3 cannot hold several
+  values in one frame, so a multi-value artist came back joined with "/".
+
+- `--restore` returns a file to the tag layout it started with. A file that had no ID3v2
+  tag was left carrying an empty one plus its padding, and a file that had only ID3v1 came
+  back with a v2 tag it never had.
+- `--restore` no longer aborts on a damaged backup entry. A missing artwork path raised
+  `KeyError` and a non-integer picture type raised `TypeError`, either of which stopped the
+  run partway and left the library half reverted. Bad entries are now reported and stepped
+  over, and a file that fails is counted in the summary.
+
+### Security
+- `--restore` refuses paths from a backup file that resolve outside the backup folder or the
+  recorded root. An absolute or `..`-prefixed path could previously make it read an
+  arbitrary local file and embed it as cover art. A target that is not an `.mp3` is refused
+  outright, so a backup entry cannot make mutagen prepend an ID3 tag to some other file. Paths are resolved through symlinks, so a
+  link planted inside the backup folder is not a way out either, and containment is tested
+  with `os.path.commonpath`, which a base that is a filesystem or drive root does not break.
+
+### Added
+- `tests/` — stdlib `unittest` round-trip suite (apply/restore fidelity, artwork
+  deduplication, dry-run parity, non-text frame preservation, path containment), run in CI
+  along with the runtime dependencies.
+
 ## [1.0.0] - 2026-08-30
 
 First public release.
