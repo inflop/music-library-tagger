@@ -1,0 +1,234 @@
+# -*- coding: utf-8 -*-
+"""Round-trip tests for apply_plan.py: apply must be undoable by --restore.
+
+Run with:  python -m unittest discover -s tests -v
+
+Uses the standard library's unittest so the test suite needs nothing beyond the
+runtime dependencies the scripts already require (mutagen, Pillow).
+"""
+import contextlib
+import io
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]
+                       / "skills" / "music-library-tagger" / "scripts"))
+
+import apply_plan  # noqa: E402
+from mutagen.id3 import ID3, APIC, TALB, TCOM, TIT2, TPUB  # noqa: E402
+from PIL import Image  # noqa: E402
+
+# Enough MPEG frame headers that mutagen accepts the file as audio.
+MP3_BYTES = (b"\xff\xfb\x90\x64" + b"\x00" * 413) * 20
+
+
+def jpeg(color, size=(600, 600)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "JPEG")
+    return buf.getvalue()
+
+
+def pixel(blob):
+    with Image.open(io.BytesIO(blob)) as im:
+        return im.convert("RGB").getpixel((10, 10))
+
+
+def close_to(got, want, tol=25):
+    return all(abs(a - b) <= tol for a, b in zip(got, want))
+
+
+class TempLibrary(unittest.TestCase):
+    """One album, one disc, two tracks, both carrying the same original cover."""
+
+    ORIGINAL = (200, 0, 0)
+    REPLACEMENT = (0, 160, 0)
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mlt-test-")
+        self.addCleanup(self._cleanup)
+        self.root = os.path.join(self.tmp, "Band")
+        self.disc = os.path.join(self.root, "1974 - Red")
+        os.makedirs(self.disc)
+
+        self.tracks = ["01 - Red.mp3", "02 - Fallen Angel.mp3"]
+        art = jpeg(self.ORIGINAL)
+        for i, name in enumerate(self.tracks, 1):
+            path = os.path.join(self.disc, name)
+            with open(path, "wb") as f:
+                f.write(MP3_BYTES)
+            tags = ID3()
+            tags.add(TALB(encoding=3, text=["old album name"]))
+            tags.add(TIT2(encoding=3, text=["track %d" % i]))
+            tags.add(TCOM(encoding=3, text=["Robert Fripp"]))
+            tags.add(TPUB(encoding=3, text=["Island Records"]))
+            tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Front",
+                          data=art))
+            tags.save(path, v2_version=3)
+
+        self.new_cover = os.path.join(self.disc, "new_cover.jpg")
+        with open(self.new_cover, "wb") as f:
+            f.write(jpeg(self.REPLACEMENT))
+
+        self.backup_dir = os.path.join(self.root, ".music-tagger")
+        os.makedirs(self.backup_dir)
+        self.backup = os.path.join(self.backup_dir, "tags_backup_test.json")
+
+    def _cleanup(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    # -- helpers ---------------------------------------------------------
+    def plan(self):
+        return {
+            "root": self.root,
+            "options": {"cover_embed": True, "cover_folder_jpg": True,
+                        "cover_max_px": 1400},
+            "albums": [{
+                "album": "Red", "year": 1974, "album_path": "1974 - Red",
+                "discs": [{
+                    "path": "1974 - Red",
+                    "cover": "1974 - Red/new_cover.jpg",
+                    "tracks": [{"file": n, "track": i, "track_total": 2,
+                                "title": "Track %d" % i}
+                               for i, n in enumerate(self.tracks, 1)],
+                }],
+            }],
+        }
+
+    def run_apply(self, dry=False):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            apply_plan.apply(self.plan(), dry)
+        return buf.getvalue()
+
+    def summary(self, output):
+        line = [l for l in output.splitlines() if "SUMMARY:" in l][-1]
+        return json.loads(line.split("SUMMARY:", 1)[1].strip())
+
+    def tags_of(self, name):
+        return ID3(os.path.join(self.disc, name))
+
+    def artwork_of(self, name):
+        pics = self.tags_of(name).getall("APIC")
+        return pics[0].data if pics else None
+
+
+class TestRestoreFidelity(TempLibrary):
+
+    def test_restore_reinstates_the_original_embedded_artwork(self):
+        """The cover the user already had must come back, not just disappear."""
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        self.run_apply()
+        self.assertTrue(close_to(pixel(self.artwork_of(self.tracks[0])),
+                                 self.REPLACEMENT),
+                        "apply should have embedded the new cover")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.restore(self.backup)
+
+        for name in self.tracks:
+            blob = self.artwork_of(name)
+            self.assertIsNotNone(blob, "%s lost its artwork on restore" % name)
+            self.assertTrue(close_to(pixel(blob), self.ORIGINAL),
+                            "%s did not get the ORIGINAL cover back" % name)
+
+    def test_restore_keeps_frames_outside_the_common_set(self):
+        """TCOM/TPUB are captured by the backup, so they must survive restore."""
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        self.run_apply()
+        with contextlib.redirect_stdout(io.StringIO()):
+            apply_plan.restore(self.backup)
+
+        tags = self.tags_of(self.tracks[0])
+        self.assertEqual(str(tags["TCOM"]), "Robert Fripp")
+        self.assertEqual(str(tags["TPUB"]), "Island Records")
+        self.assertEqual(str(tags["TALB"]), "old album name")
+
+    def test_backup_deduplicates_identical_artwork(self):
+        """Both tracks share one cover -- it should be stored once, not twice."""
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        art_dir = os.path.splitext(self.backup)[0] + "_art"
+        self.assertEqual(len(os.listdir(art_dir)), 1)
+
+        with open(self.backup, encoding="utf-8") as f:
+            data = json.load(f)
+        refs = [e["sha1"] for f in data["files"].values() for e in f["apic"]]
+        self.assertEqual(len(refs), 2, "both tracks should reference the image")
+        self.assertEqual(len(set(refs)), 1, "and it should be the same image")
+
+    def test_legacy_backup_without_artwork_is_reported(self):
+        """An old-format backup cannot restore art; it must say so, not stay silent."""
+        apply_plan.backup_tags(self.root, self.plan(), self.backup)
+        with open(self.backup, encoding="utf-8") as f:
+            data = json.load(f)
+        for info in data["files"].values():
+            info.pop("apic")
+            info["had_apic"] = True
+        with open(self.backup, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            apply_plan.restore(self.backup)
+        self.assertIn("could not be restored", buf.getvalue())
+
+
+class TestDryRun(TempLibrary):
+
+    def test_dry_run_counts_the_cover_work_it_would_do(self):
+        """A preview that reports 0 covers hides the most destructive step."""
+        dry = self.summary(self.run_apply(dry=True))
+        wet = self.summary(self.run_apply(dry=False))
+        self.assertEqual(dry, wet)
+        self.assertEqual(dry["covers_embedded"], 2)
+        self.assertEqual(dry["cover_jpgs"], 1)
+
+    def test_dry_run_changes_nothing_on_disk(self):
+        before = {n: self.tags_of(n).getall("APIC")[0].data for n in self.tracks}
+        self.run_apply(dry=True)
+        self.assertFalse(os.path.exists(os.path.join(self.disc, "cover.jpg")))
+        for name in self.tracks:
+            self.assertEqual(self.artwork_of(name), before[name])
+            self.assertEqual(str(self.tags_of(name)["TALB"]), "old album name")
+
+
+class TestApplyThroughMain(TempLibrary):
+
+    def test_full_round_trip_via_cli(self):
+        """The path a user actually takes: apply, then restore from the backup."""
+        plan_path = os.path.join(self.tmp, "plan.json")
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(self.plan(), f)
+
+        argv = sys.argv
+        try:
+            sys.argv = ["apply_plan.py", "--plan", plan_path]
+            with contextlib.redirect_stdout(io.StringIO()):
+                apply_plan.main()
+
+            self.assertEqual(str(self.tags_of(self.tracks[0])["TALB"]), "Red")
+            self.assertTrue(os.path.exists(os.path.join(self.disc, "cover.jpg")))
+
+            backups = [f for f in os.listdir(self.backup_dir)
+                       if f.startswith("tags_backup_") and f.endswith(".json")]
+            self.assertEqual(len(backups), 1)
+
+            sys.argv = ["apply_plan.py", "--restore",
+                        os.path.join(self.backup_dir, backups[0])]
+            with contextlib.redirect_stdout(io.StringIO()):
+                apply_plan.main()
+        finally:
+            sys.argv = argv
+
+        self.assertEqual(str(self.tags_of(self.tracks[0])["TALB"]),
+                         "old album name")
+        self.assertTrue(close_to(pixel(self.artwork_of(self.tracks[0])),
+                                 self.ORIGINAL))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2,7 +2,9 @@
 """
 Apply a tagging plan (plan.json) to an MP3 library, or restore from a backup.
 
-Always makes a full text-tag backup BEFORE writing, so changes are reversible.
+Always makes a full tag AND artwork backup BEFORE writing, so changes are
+reversible: embedded cover art is copied out to a sidecar folder next to the
+backup JSON and put back verbatim by --restore.
 Only ID3 tags and artwork are touched -- the audio stream is never re-encoded.
 
 Usage:
@@ -45,11 +47,11 @@ plan.json schema (all paths are RELATIVE to "root", forward slashes ok):
   ]
 }
 """
-import os, sys, io, json, time, argparse, shutil
+import os, sys, io, json, time, argparse, shutil, hashlib
 
 from mutagen.mp3 import MP3
-from mutagen.id3 import (ID3, ID3NoHeaderError, TALB, TPE1, TPE2, TIT2, TCON,
-                         TDRC, TRCK, TPOS, APIC)
+from mutagen.id3 import (ID3, ID3NoHeaderError, Frames, TALB, TPE1, TPE2, TIT2,
+                         TCON, TDRC, TRCK, TPOS, APIC)
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
@@ -64,6 +66,33 @@ def rp(root, rel):
     if os.path.isabs(rel):
         return rel
     return os.path.join(root, rel.replace("/", os.sep))
+
+
+ART_EXT = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
+           "image/gif": ".gif", "image/webp": ".webp"}
+
+
+def rebuild_frame(key, vals):
+    """Recreate a text frame from its backup key and values.
+
+    Uses mutagen's own frame registry rather than a hand-kept map, so frames
+    like TCOM/TPUB/TOPE survive a restore instead of being silently dropped.
+    """
+    base, _, rest = key.partition(":")
+    cls = Frames.get(base)
+    if cls is None:
+        return None
+    kw = {"encoding": 3, "text": vals}
+    if base == "TXXX":
+        kw["desc"] = rest.split(":")[0] if rest else ""
+    elif base == "COMM":
+        parts = rest.split(":") if rest else []
+        kw["desc"] = parts[0] if parts else ""
+        kw["lang"] = parts[1] if len(parts) > 1 else "eng"
+    try:
+        return cls(**kw)
+    except Exception:
+        return None
 
 
 def load_id3(path):
@@ -88,7 +117,16 @@ def process_cover_bytes(img_path, max_px):
 # ------------------------------- backup / restore -------------------------------
 
 def backup_tags(root, plan, backup_path):
-    data = {"root": root, "created": time.strftime("%Y-%m-%d %H:%M:%S"), "files": {}}
+    # Artwork cannot live in the JSON, so it goes to a sidecar folder named after
+    # the backup file. Images are deduplicated by SHA-1: the same front cover is
+    # embedded in every track of an album, and storing it once per track would
+    # bloat the backup by the track count for no gain.
+    art_dir = os.path.splitext(backup_path)[0] + "_art"
+    art_rel = os.path.basename(art_dir)
+    seen = {}
+
+    data = {"root": root, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "art_dir": art_rel, "files": {}}
     for alb in plan["albums"]:
         for disc in alb["discs"]:
             dpath = rp(root, disc["path"])
@@ -98,48 +136,81 @@ def backup_tags(root, plan, backup_path):
                     continue
                 tags = load_id3(fpath)
                 frames = {}
-                had_apic = False
+                art = []
                 for key in list(tags.keys()):
                     base = key.split(":")[0]
-                    if base == "APIC":
-                        had_apic = True
-                        continue
                     fr = tags[key]
+                    if base == "APIC":
+                        blob = getattr(fr, "data", None)
+                        if not blob:
+                            continue
+                        digest = hashlib.sha1(blob).hexdigest()
+                        if digest not in seen:
+                            os.makedirs(art_dir, exist_ok=True)
+                            mime = (getattr(fr, "mime", "") or "").lower()
+                            name = digest + ART_EXT.get(mime, ".bin")
+                            with open(os.path.join(art_dir, name), "wb") as af:
+                                af.write(blob)
+                            seen[digest] = name
+                        art.append({
+                            "sha1": digest,
+                            "file": "%s/%s" % (art_rel, seen[digest]),
+                            "mime": getattr(fr, "mime", "") or "image/jpeg",
+                            "type": int(getattr(fr, "type", 3)),
+                            "desc": getattr(fr, "desc", "") or "",
+                        })
+                        continue
                     try:
                         frames[key] = [str(x) for x in fr.text]
                     except Exception:
                         pass
                 data["files"][os.path.relpath(fpath, root).replace("\\", "/")] = {
-                    "frames": frames, "had_apic": had_apic}
+                    "frames": frames, "had_apic": bool(art), "apic": art}
     with open(backup_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
-    log("Backup of %d files -> %s" % (len(data["files"]), backup_path))
+    log("Backup of %d files (%d distinct artwork images) -> %s"
+        % (len(data["files"]), len(seen), backup_path))
 
 
 def restore(backup_path):
     with open(backup_path, encoding="utf-8") as f:
         data = json.load(f)
     root = data["root"]
-    FRAME = {"TALB": TALB, "TPE1": TPE1, "TPE2": TPE2, "TIT2": TIT2, "TCON": TCON,
-             "TDRC": TDRC, "TRCK": TRCK, "TPOS": TPOS}
+    bdir = os.path.dirname(os.path.abspath(backup_path))
     n = 0
+    n_art = 0
+    legacy = 0
     for rel, info in data["files"].items():
         fpath = os.path.join(root, rel.replace("/", os.sep))
         if not os.path.isfile(fpath):
             continue
         tags = ID3()
         for key, vals in info["frames"].items():
-            base = key.split(":")[0]
-            cls = FRAME.get(base)
-            if cls is None:
+            fr = rebuild_frame(key, vals)
+            if fr is not None:
+                tags.add(fr)
+        art = info.get("apic")
+        if art is None and info.get("had_apic"):
+            # Backup written before artwork was stored: the original image is not
+            # recoverable, so say so instead of dropping it silently.
+            legacy += 1
+        for item in art or []:
+            apath = os.path.join(bdir, item["file"].replace("/", os.sep))
+            if not os.path.isfile(apath):
+                log("  !! missing backup artwork: %s" % item["file"])
                 continue
-            try:
-                tags.add(cls(encoding=3, text=vals))
-            except Exception:
-                pass
+            with open(apath, "rb") as af:
+                tags.add(APIC(encoding=3, mime=item.get("mime") or "image/jpeg",
+                              type=item.get("type", 3), desc=item.get("desc", ""),
+                              data=af.read()))
+            n_art += 1
         tags.save(fpath, v2_version=3)
         n += 1
-    log("Restored text tags on %d files (tool-added artwork removed; moved image files NOT reverted)." % n)
+    log("Restored tags on %d files, %d artwork images reinstated "
+        "(moved image files NOT reverted)." % (n, n_art))
+    if legacy:
+        log("  !! %d file(s) came from an old backup that stored no artwork -- "
+            "their original embedded covers could not be restored." % legacy)
 
 
 # ------------------------------- apply -------------------------------
@@ -167,11 +238,10 @@ def apply(plan, dry):
         artist = alb.get("artist", def_artist)
 
         # pre-process album-level cover once
-        album_cover_bytes = None
-        if alb.get("album_cover"):
-            src = rp(root, alb["album_cover"])
-            if src and os.path.isfile(src):
-                album_cover_bytes = None if dry else process_cover_bytes(src, max_px)
+        album_src = rp(root, alb["album_cover"]) if alb.get("album_cover") else None
+        has_album_cover = bool(album_src and os.path.isfile(album_src))
+        album_cover_bytes = (process_cover_bytes(album_src, max_px)
+                             if has_album_cover and not dry else None)
 
         for disc in alb["discs"]:
             dpath = rp(root, disc["path"])
@@ -179,10 +249,10 @@ def apply(plan, dry):
             disc_total = disc.get("disc_total")
 
             # disc cover bytes
-            cover_bytes = None
             csrc = rp(root, disc["cover"]) if disc.get("cover") else None
-            if csrc and os.path.isfile(csrc):
-                cover_bytes = None if dry else process_cover_bytes(csrc, max_px)
+            has_cover = bool(csrc and os.path.isfile(csrc))
+            cover_bytes = (process_cover_bytes(csrc, max_px)
+                           if has_cover and not dry else None)
 
             # relocate extra named scans into this disc folder
             for pair in disc.get("move_images", []):
@@ -228,10 +298,11 @@ def apply(plan, dry):
                     setf(TPOS, pos)
 
                 # embed cover
-                if embed and cover_bytes is not None:
-                    tags.delall("APIC")
-                    tags.add(APIC(encoding=3, mime="image/jpeg", type=3,
-                                  desc="Front", data=cover_bytes))
+                if embed and has_cover:
+                    if not dry:
+                        tags.delall("APIC")
+                        tags.add(APIC(encoding=3, mime="image/jpeg", type=3,
+                                      desc="Front", data=cover_bytes))
                     changes["covers_embedded"] += 1
 
                 if not dry:
@@ -239,7 +310,7 @@ def apply(plan, dry):
                 changes["tracks"] += 1
 
             # write disc-level cover.jpg
-            if folder_jpg and cover_bytes is not None:
+            if folder_jpg and has_cover:
                 out = os.path.join(dpath, "cover.jpg")
                 if not dry:
                     with open(out, "wb") as f:
@@ -248,7 +319,7 @@ def apply(plan, dry):
                 log("  cover.jpg -> %s" % os.path.relpath(out, root))
 
         # album-level cover.jpg (multi-disc parent)
-        if folder_jpg and album_cover_bytes is not None and alb.get("album_path"):
+        if folder_jpg and has_album_cover and alb.get("album_path"):
             apath = rp(root, alb["album_path"])
             out = os.path.join(apath, "cover.jpg")
             if not dry:

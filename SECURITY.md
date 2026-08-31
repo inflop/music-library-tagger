@@ -35,14 +35,18 @@ The skill's hard rule is that **no identifying data is written anywhere**:
 ## Reversibility
 
 `apply_plan.py` writes `.music-tagger/tags_backup_<timestamp>.json` containing every text
-tag of every file it is about to touch, **before** the first write. Restore with:
+tag of every file it is about to touch, **before** the first write. Embedded cover art is
+copied out alongside it into `tags_backup_<timestamp>_art/` (deduplicated by SHA-1, since
+one cover is normally repeated across every track of an album). Restore with:
 
 ```bash
 python apply_plan.py --restore .music-tagger/tags_backup_<timestamp>.json
 ```
 
-This reverts text tags and removes artwork the tool added. Copied image files and
-`cover.jpg` are logged but not auto-deleted.
+This puts back the text tags **and the artwork each file originally carried**, replacing
+any cover the tool embedded. Copied image files and `cover.jpg` are logged but not
+auto-deleted. A backup folder is only useful together with its `_art` sidecar — move or
+delete them as a pair.
 
 ## Reporting a vulnerability
 
