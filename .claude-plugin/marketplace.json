@@ -13,7 +13,7 @@
       "displayName": "Music Library Tagger",
       "source": "./",
       "description": "Clean up an artist's MP3/ID3 album collection for Navidrome, Plex, Jellyfin or Subsonic: canonical album titles, correct release years, track titles, genres, multi-disc numbering, album artist and cover art (embedded + cover.jpg), verified against MusicBrainz and the Cover Art Archive. Analyzes, asks a few decisions, writes a reviewable Markdown plan, applies it reversibly with a full tag backup.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": {
         "name": "Rafał Klepacz",
         "url": "https://github.com/inflop"

@@ -22,7 +22,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 # MusicBrainz requires a User-Agent that identifies the application and offers a
 # contact. We satisfy that with the project URL only -- no personal data ever
 # leaves the machine. Keep VERSION in sync with .claude-plugin/plugin.json.
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 CONTACT = "https://github.com/inflop/music-library-tagger"
 UA = "MusicLibraryTagger/%s ( %s )" % (VERSION, CONTACT)
 MB = "https://musicbrainz.org/ws/2"
