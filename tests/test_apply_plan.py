@@ -458,6 +458,34 @@ class TestDamagedBackup(TempLibrary):
         self.assertEqual(self.tags_of(self.tracks[0]).getall("APIC")[0].mime,
                          "IMAGE/JPEG")
 
+    def test_an_artwork_entry_that_is_not_an_object_costs_only_its_image(self):
+        def mutate(data):
+            first = sorted(data["files"])[0]
+            data["files"][first]["apic"] = ["nie obiekt", 42]
+        out = self.restore_with(mutate)
+        self.assertIn("not an object", out)
+        # the file itself is still restored -- only its artwork is missing
+        self.assertEqual(str(self.tags_of(self.tracks[0])["TALB"]),
+                         "old album name")
+        self.assertIsNone(self.artwork_of(self.tracks[0]))
+        self.assertNotIn("could not restore", out)
+
+    def test_a_backup_entry_that_is_not_an_object_is_skipped(self):
+        def mutate(data):
+            first = sorted(data["files"])[0]
+            data["files"][first] = "kaboom"
+        out = self.restore_with(mutate)
+        self.assertIn("is not an object", out)
+        self.assertEqual(str(self.tags_of(self.tracks[1])["TALB"]),
+                         "old album name")
+
+    def test_a_backup_without_the_expected_shape_is_rejected(self):
+        def mutate(data):
+            data.clear()
+            data["nonsense"] = True
+        out = self.restore_with(mutate)
+        self.assertIn("not a usable backup", out)
+
     def test_one_broken_entry_does_not_abort_the_others(self):
         def mutate(data):
             first = sorted(data["files"])[0]

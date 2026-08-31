@@ -254,38 +254,53 @@ def restore_file(fpath, info, bdir):
             tags.add(fr)
 
     n_art = 0
-    for item in info.get("apic") or []:
-        # Every field here is data from a file a human may have edited. A bad
-        # entry costs its own image, never the rest of the restore.
-        name = item.get("file")
-        if not isinstance(name, str) or not name:
-            log("  !! artwork entry with no usable path, skipped")
-            continue
-        apath = within(bdir, name.replace("/", os.sep))
-        if apath is None:
-            log("  !! refusing artwork path outside the backup folder: %s" % name)
-            continue
-        if not os.path.isfile(apath):
-            log("  !! missing backup artwork: %s" % name)
-            continue
+    art = info.get("apic")
+    if not isinstance(art, list):
+        art = []
+    for item in art:
+        # Everything here is data from a file a human may have edited -- down to
+        # whether the entry is an object at all. Whatever is wrong with it, it
+        # costs its own image and nothing more. Guarding field by field would
+        # never end; this boundary is what makes that guarantee hold.
         try:
-            pic_type = int(item.get("type", 3))
-        except (TypeError, ValueError):
-            pic_type = 3
-        # mutagen str()s whatever it is given, so a number or a list here would
-        # not fail -- it would quietly write "123" as the MIME type of a picture
-        # in someone's file. Case is left alone: it is copied from the frame the
-        # backup read, and normalising it would be less faithful, not more.
-        mime = item.get("mime")
-        if not isinstance(mime, str) or not mime:
-            mime = "image/jpeg"
-        desc = item.get("desc")
-        if not isinstance(desc, str):
-            desc = ""
-        with open(apath, "rb") as af:
-            tags.add(APIC(encoding=3, mime=mime, type=pic_type, desc=desc,
-                          data=af.read()))
-        n_art += 1
+            if not isinstance(item, dict):
+                log("  !! artwork entry is not an object, skipped")
+                continue
+            name = item.get("file")
+            if not isinstance(name, str) or not name:
+                log("  !! artwork entry with no usable path, skipped")
+                continue
+            apath = within(bdir, name.replace("/", os.sep))
+            if apath is None:
+                log("  !! refusing artwork path outside the backup folder: %s"
+                    % name)
+                continue
+            if not os.path.isfile(apath):
+                log("  !! missing backup artwork: %s" % name)
+                continue
+            try:
+                pic_type = int(item.get("type", 3))
+            except (TypeError, ValueError):
+                pic_type = 3
+            # mutagen str()s whatever it is given, so a number or a list here
+            # would not fail -- it would quietly write "123" as the MIME type of
+            # a picture in someone's file. Case is left alone: it is copied from
+            # the frame the backup read, and normalising it would be less
+            # faithful, not more.
+            mime = item.get("mime")
+            if not isinstance(mime, str) or not mime:
+                mime = "image/jpeg"
+            desc = item.get("desc")
+            if not isinstance(desc, str):
+                desc = ""
+            with open(apath, "rb") as af:
+                tags.add(APIC(encoding=3, mime=mime, type=pic_type, desc=desc,
+                              data=af.read()))
+            n_art += 1
+        except Exception as e:
+            log("  !! skipping a damaged artwork entry: %s: %s"
+                % (type(e).__name__, e))
+
 
     ver = info.get("id3_version")
     if ver is None and not tags:
@@ -309,6 +324,12 @@ def restore_file(fpath, info, bdir):
 def restore(backup_path):
     with open(backup_path, encoding="utf-8") as f:
         data = json.load(f)
+    # Check the shape once here rather than guarding every field downstream.
+    if (not isinstance(data, dict) or not isinstance(data.get("root"), str)
+            or not isinstance(data.get("files"), dict)):
+        log("!! %s is not a usable backup: expected a root path and a files "
+            "mapping." % backup_path)
+        return
     root = data["root"]
     bdir = os.path.dirname(os.path.abspath(backup_path))
     n = 0
@@ -316,6 +337,10 @@ def restore(backup_path):
     legacy = 0
     failed = 0
     for rel, info in data["files"].items():
+        if not isinstance(info, dict):
+            log("  !! skipping %s: its backup entry is not an object" % rel)
+            failed += 1
+            continue
         fpath = within(root, rel.replace("/", os.sep))
         if fpath is None:
             log("  !! refusing path outside the backup root: %s" % rel)
