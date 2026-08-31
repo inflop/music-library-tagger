@@ -177,7 +177,7 @@ def backup_tags(root, plan, backup_path):
     seen = {}
 
     data = {"root": root, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "art_dir": art_rel, "files": {}}
+            "files": {}}
     for alb in plan["albums"]:
         for disc in alb["discs"]:
             dpath = rp(root, disc["path"])
