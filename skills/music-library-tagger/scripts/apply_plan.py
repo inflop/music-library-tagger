@@ -272,9 +272,18 @@ def restore_file(fpath, info, bdir):
             pic_type = int(item.get("type", 3))
         except (TypeError, ValueError):
             pic_type = 3
+        # mutagen str()s whatever it is given, so a number or a list here would
+        # not fail -- it would quietly write "123" as the MIME type of a picture
+        # in someone's file. Case is left alone: it is copied from the frame the
+        # backup read, and normalising it would be less faithful, not more.
+        mime = item.get("mime")
+        if not isinstance(mime, str) or not mime:
+            mime = "image/jpeg"
+        desc = item.get("desc")
+        if not isinstance(desc, str):
+            desc = ""
         with open(apath, "rb") as af:
-            tags.add(APIC(encoding=3, mime=item.get("mime") or "image/jpeg",
-                          type=pic_type, desc=item.get("desc") or "",
+            tags.add(APIC(encoding=3, mime=mime, type=pic_type, desc=desc,
                           data=af.read()))
         n_art += 1
 

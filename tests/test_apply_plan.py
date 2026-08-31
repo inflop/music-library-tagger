@@ -437,6 +437,27 @@ class TestDamagedBackup(TempLibrary):
             self.assertEqual(len(pics), 1)
             self.assertEqual(pics[0].type, 3)
 
+    def test_non_string_mime_and_desc_fall_back(self):
+        """mutagen str()s these, so a number would be written as the MIME type."""
+        def mutate(data):
+            for info in data["files"].values():
+                for entry in info["apic"]:
+                    entry["mime"] = 123
+                    entry["desc"] = ["a", "b"]
+        self.restore_with(mutate)
+        pic = self.tags_of(self.tracks[0]).getall("APIC")[0]
+        self.assertEqual(pic.mime, "image/jpeg")
+        self.assertEqual(pic.desc, "")
+
+    def test_a_valid_mime_keeps_its_case(self):
+        def mutate(data):
+            for info in data["files"].values():
+                for entry in info["apic"]:
+                    entry["mime"] = "IMAGE/JPEG"
+        self.restore_with(mutate)
+        self.assertEqual(self.tags_of(self.tracks[0]).getall("APIC")[0].mime,
+                         "IMAGE/JPEG")
+
     def test_one_broken_entry_does_not_abort_the_others(self):
         def mutate(data):
             first = sorted(data["files"])[0]
