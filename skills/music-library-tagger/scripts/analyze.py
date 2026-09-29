@@ -139,11 +139,8 @@ def main():
     # 1) find every folder that directly contains audio files ("disc folders")
     disc_folders = []
     for dp, dns, fns in os.walk(root):
-        if os.sep + "." in dp or "/." in dp.replace("\\", "/"):
-            # skip dotfolders like .music-tagger / .claude
-            parts = os.path.relpath(dp, root).split(os.sep)
-            if any(p.startswith(".") for p in parts):
-                continue
+        # Do not descend into hidden folders such as .music-tagger or .git.
+        dns[:] = [name for name in dns if not name.startswith(".")]
         if any(f.lower().endswith(AUDIO_EXT) for f in fns):
             disc_folders.append(dp)
 
