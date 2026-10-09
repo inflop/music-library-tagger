@@ -508,6 +508,10 @@ def apply(plan, dry):
                 if not os.path.isfile(fpath):
                     log("  !! missing file: %s" % fpath); continue
 
+                ext = os.path.splitext(fpath)[1].lower()
+                if ext not in AUDIO_EXT:
+                    log("  !! refusing a target that is not an MP3 or FLAC file: %s" % fpath)
+                    continue
                 if flac_tags.is_flac(fpath):
                     use_cover = embed and has_cover
                     if not dry:
