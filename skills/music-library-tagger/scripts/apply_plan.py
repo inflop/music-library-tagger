@@ -67,6 +67,8 @@ from mutagen.mp3 import MP3
 from mutagen.id3 import (ID3, ID3NoHeaderError, Frames, TextFrame, TALB, TPE1,
                          TPE2, TIT2, TCON, TDRC, TRCK, TPOS, APIC)
 
+import flac_tags
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 
@@ -87,7 +89,7 @@ ART_EXT = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
 
 # What analyze.py collects and apply() writes. A restore must not stray outside
 # it: mutagen will happily prepend an ID3 tag to any file it is handed.
-AUDIO_EXT = (".mp3",)
+AUDIO_EXT = (".mp3",) + flac_tags.FLAC_EXT
 
 
 def within(base, rel):
@@ -176,6 +178,17 @@ def backup_tags(root, plan, backup_path):
     art_rel = os.path.basename(art_dir)
     seen = {}
 
+    def stash(blob, mime):
+        """Store an image once in the sidecar folder; return (sha1, file name)."""
+        digest = hashlib.sha1(blob).hexdigest()
+        if digest not in seen:
+            os.makedirs(art_dir, exist_ok=True)
+            name = digest + ART_EXT.get((mime or "").lower(), ".bin")
+            with open(os.path.join(art_dir, name), "wb") as af:
+                af.write(blob)
+            seen[digest] = name
+        return digest, seen[digest]
+
     data = {"root": root, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
             "files": {}}
     for alb in plan["albums"]:
@@ -184,6 +197,24 @@ def backup_tags(root, plan, backup_path):
             for tr in disc["tracks"]:
                 fpath = os.path.join(dpath, tr["file"])
                 if not os.path.isfile(fpath):
+                    continue
+                if flac_tags.is_flac(fpath):
+                    comments, pictures = flac_tags.snapshot(fpath)
+                    art = []
+                    for pic in pictures:
+                        if not pic["data"]:
+                            continue
+                        digest, name = stash(pic["data"], pic["mime"])
+                        art.append({
+                            "sha1": digest, "file": "%s/%s" % (art_rel, name),
+                            "mime": pic["mime"] or "image/jpeg",
+                            "type": pic["type"], "desc": pic["desc"] or "",
+                            "width": pic["width"], "height": pic["height"],
+                            "depth": pic["depth"], "colors": pic["colors"],
+                        })
+                    data["files"][os.path.relpath(fpath, root).replace("\\", "/")] = {
+                        "format": "flac", "vorbis": comments,
+                        "had_apic": bool(art), "apic": art}
                     continue
                 try:
                     tags = ID3(fpath)
@@ -203,17 +234,10 @@ def backup_tags(root, plan, backup_path):
                         blob = getattr(fr, "data", None)
                         if not blob:
                             continue
-                        digest = hashlib.sha1(blob).hexdigest()
-                        if digest not in seen:
-                            os.makedirs(art_dir, exist_ok=True)
-                            mime = (getattr(fr, "mime", "") or "").lower()
-                            name = digest + ART_EXT.get(mime, ".bin")
-                            with open(os.path.join(art_dir, name), "wb") as af:
-                                af.write(blob)
-                            seen[digest] = name
+                        digest, name = stash(blob, getattr(fr, "mime", ""))
                         art.append({
                             "sha1": digest,
-                            "file": "%s/%s" % (art_rel, seen[digest]),
+                            "file": "%s/%s" % (art_rel, name),
                             "mime": getattr(fr, "mime", "") or "image/jpeg",
                             "type": int(getattr(fr, "type", 3)),
                             "desc": getattr(fr, "desc", "") or "",
@@ -238,23 +262,13 @@ def backup_tags(root, plan, backup_path):
         % (len(data["files"]), len(seen), backup_path))
 
 
-def restore_file(fpath, info, bdir):
-    """Rewrite one file from its backup entry; returns the artwork count."""
-    # Start from what is on disk and replace only what this tool manages: text
-    # frames and artwork. Frames it never wrote -- POPM ratings, UFID
-    # identifiers, USLT lyrics -- stay untouched instead of being wiped by a
-    # rebuild from scratch.
-    tags = load_id3(fpath)
-    for key in list(tags.keys()):
-        if isinstance(tags[key], TextFrame) or key.split(":")[0] == "APIC":
-            del tags[key]
-    for key, vals in (info.get("frames") or {}).items():
-        fr = rebuild_frame(key, vals)
-        if fr is not None:
-            tags.add(fr)
+def load_artwork(art, bdir):
+    """Artwork entries of a backup, read back from the sidecar folder.
 
-    n_art = 0
-    art = info.get("apic")
+    Returns dicts with the image bytes (`data`) and its `mime`, `type`, `desc`
+    plus the raw entry (`item`). A damaged entry is logged and skipped.
+    """
+    out = []
     if not isinstance(art, list):
         art = []
     for item in art:
@@ -294,13 +308,57 @@ def restore_file(fpath, info, bdir):
             if not isinstance(desc, str):
                 desc = ""
             with open(apath, "rb") as af:
-                tags.add(APIC(encoding=3, mime=mime, type=pic_type, desc=desc,
-                              data=af.read()))
-            n_art += 1
+                out.append({"data": af.read(), "mime": mime, "type": pic_type,
+                            "desc": desc, "item": item})
         except Exception as e:
             log("  !! skipping a damaged artwork entry: %s: %s"
                 % (type(e).__name__, e))
+    return out
 
+
+def restore_flac_file(fpath, info, bdir):
+    """Rewrite one FLAC file from its backup entry; returns the artwork count."""
+    comments = info.get("vorbis")
+    if comments is not None:
+        # [[name, value], ...] -- anything else is a damaged or hand-edited entry.
+        if not isinstance(comments, list) or not all(
+                isinstance(c, list) and len(c) == 2
+                and all(isinstance(x, str) for x in c) for c in comments):
+            raise ValueError("the Vorbis comments in the backup are malformed")
+    pictures = []
+    for art in load_artwork(info.get("apic"), bdir):
+        extra = {}
+        for field in ("width", "height", "depth", "colors"):
+            try:
+                extra[field] = int(art["item"].get(field, 0))
+            except (TypeError, ValueError):
+                extra[field] = 0
+        pictures.append(dict(data=art["data"], mime=art["mime"],
+                             type=art["type"], desc=art["desc"], **extra))
+    flac_tags.rewrite(fpath, comments, pictures)
+    return len(pictures)
+
+
+def restore_file(fpath, info, bdir):
+    """Rewrite one file from its backup entry; returns the artwork count."""
+    # Start from what is on disk and replace only what this tool manages: text
+    # frames and artwork. Frames it never wrote -- POPM ratings, UFID
+    # identifiers, USLT lyrics -- stay untouched instead of being wiped by a
+    # rebuild from scratch.
+    tags = load_id3(fpath)
+    for key in list(tags.keys()):
+        if isinstance(tags[key], TextFrame) or key.split(":")[0] == "APIC":
+            del tags[key]
+    for key, vals in (info.get("frames") or {}).items():
+        fr = rebuild_frame(key, vals)
+        if fr is not None:
+            tags.add(fr)
+
+    n_art = 0
+    for art in load_artwork(info.get("apic"), bdir):
+        tags.add(APIC(encoding=3, mime=art["mime"], type=art["type"],
+                      desc=art["desc"], data=art["data"]))
+        n_art += 1
 
     ver = info.get("id3_version")
     if ver is None and not tags:
@@ -346,16 +404,23 @@ def restore(backup_path):
             log("  !! refusing path outside the backup root: %s" % rel)
             continue
         if os.path.splitext(fpath)[1].lower() not in AUDIO_EXT:
-            log("  !! refusing a target that is not an MP3: %s" % rel)
+            log("  !! refusing a target that is not an MP3 or FLAC file: %s" % rel)
             continue
         if not os.path.isfile(fpath):
+            continue
+        # Backups from before FLAC support carry no "format" and are ID3.
+        is_flac = flac_tags.is_flac(fpath)
+        if info.get("format", "id3") != ("flac" if is_flac else "id3"):
+            log("  !! backup entry does not match the file type, skipped: %s" % rel)
+            failed += 1
             continue
         if info.get("apic") is None and info.get("had_apic"):
             # Backup written before artwork was stored: the original image is not
             # recoverable, so say so instead of dropping it silently.
             legacy += 1
         try:
-            n_art += restore_file(fpath, info, bdir)
+            n_art += (restore_flac_file if is_flac else restore_file)(
+                fpath, info, bdir)
         except Exception as e:
             # Undoing a run halfway is worse than skipping one file, so a damaged
             # entry is reported and stepped over rather than aborting the rest.
@@ -431,6 +496,22 @@ def apply(plan, dry):
                 fpath = os.path.join(dpath, tr["file"])
                 if not os.path.isfile(fpath):
                     log("  !! missing file: %s" % fpath); continue
+
+                if flac_tags.is_flac(fpath):
+                    use_cover = embed and has_cover
+                    if not dry:
+                        flac_tags.write(
+                            fpath, album=album, title=tr.get("title"),
+                            artist=artist, album_artist=aa, year=year,
+                            genre=genre, track=tr.get("track"),
+                            track_total=tr.get("track_total"), disc=disc_no,
+                            disc_total=disc_total, strip=strip,
+                            cover=cover_bytes if use_cover else None)
+                    if use_cover:
+                        changes["covers_embedded"] += 1
+                    changes["tracks"] += 1
+                    continue
+
                 tags = load_id3(fpath)
 
                 # strip unwanted frames
