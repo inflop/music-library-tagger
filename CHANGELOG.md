@@ -12,6 +12,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nothing and reports how many files would be restored, how many artwork images reinstated and
   which entries would fail. It runs the restore on a temporary copy of each file, so it applies
   the same checks a real restore does.
+  Restore, dry or real, now also counts and reports every entry it skips (a path outside the
+  backup root, an unsupported target, a file that no longer exists); the last two were skipped
+  without being counted, and a missing file without a word.
 
 ## [1.1.0] - 2026-10-09
 

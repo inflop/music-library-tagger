@@ -282,12 +282,16 @@ def restore(backup_path, dry=False):
         fpath = within(root, rel.replace("/", os.sep))
         if fpath is None:
             log("  !! refusing path outside the backup root: %s" % rel)
+            failed += 1
             continue
         backend = tagio.backend_for(fpath)
         if backend is None:
             log("  !! refusing a target that is not a supported audio file: %s" % rel)
+            failed += 1
             continue
         if not os.path.isfile(fpath):
+            log("  !! %s is missing, nothing to restore" % rel)
+            failed += 1
             continue
         if info.get("format", tagio.LEGACY_FORMAT) != backend.NAME:
             log("  !! backup entry does not match the file type, skipped: %s" % rel)

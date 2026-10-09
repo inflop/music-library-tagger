@@ -258,6 +258,36 @@ class BackendContract(unittest.TestCase):
             self.assertIn("1 artwork image would be reinstated", out)
             self.assertEqual([Path(p).read_bytes() for p in paths], applied)
 
+    def test_every_entry_a_restore_skips_is_reported_and_counted(self):
+        # Refused paths, unsupported targets and missing files used to be skipped
+        # without being counted (and a missing file without a word), so the summary
+        # could look complete when entries had been left out.
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            data = json.loads(Path(backup).read_text(encoding="utf-8"))
+            template = next(iter(data["files"].values()))
+            ext = FACTORIES[kind][0]
+            data["files"]["../outside" + ext] = template                  # escapes the root
+            data["files"]["settings.cfg"] = template                      # not audio
+            gone = os.path.relpath(paths[1], plan["root"]).replace("\\", "/")
+            data["files"][gone] = template                                # file was removed
+            os.remove(paths[1])
+            Path(backup).write_text(json.dumps(data), encoding="utf-8")
+
+            dry = self.output_of(apply_plan.restore, backup, True)
+            real = self.output_of(apply_plan.restore, backup)
+
+            for out, footer in ((dry, "3 file(s) would not be restored"),
+                                (real, "3 file(s) could not be restored")):
+                self.assertIn("refusing path outside the backup root", out)
+                self.assertIn("refusing a target that is not a supported audio file", out)
+                self.assertIn("is missing, nothing to restore", out)
+                self.assertIn(footer, out)
+            self.assertIn("would restore tags on 1 file,", dry)
+            self.assertIn("Restored tags on 1 file,", real)
+
     def test_the_restore_summary_uses_the_singular_for_one(self):
         for kind in self.each_kind():
             plan, paths, _, backup = self.library(kind)
