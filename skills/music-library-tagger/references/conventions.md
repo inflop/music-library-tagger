@@ -33,9 +33,9 @@ Read before building a plan. These encode the decisions this skill was designed 
   (`cover.*`, `front.*`, `folder.*`). Embedding + a folder `cover.jpg` is the most portable.
   Navidrome's `CoverArtPriority` controls precedence.
 
-## FLAC (Vorbis comments)
+## FLAC and Ogg Vorbis / Opus (Vorbis comments)
 
-FLAC files carry Vorbis comments instead of ID3 frames. The plan stays the same; the tool maps
+FLAC and Ogg files carry Vorbis comments instead of ID3 frames. The plan stays the same; the tool maps
 fields as follows when it writes:
 
 | Concept | MP3 (ID3) | FLAC (Vorbis) |
@@ -45,18 +45,21 @@ fields as follows when it writes:
 | Year | `TDRC` | `DATE` (a stale `YEAR` is removed) |
 | Track | `TRCK` = `n/total` | `TRACKNUMBER` + `TOTALTRACKS` (stale `TRACKTOTAL` removed) |
 | Disc | `TPOS` = `n/total` | `DISCNUMBER` + `TOTALDISCS` (stale `DISCTOTAL` removed) |
-| Cover | `APIC` | one FLAC `Picture` block, type 3 (front) |
+| Cover | `APIC` | FLAC: one `Picture` block, type 3 (front). Ogg/Opus: a base64 `METADATA_BLOCK_PICTURE` comment holding the same structure (a legacy `COVERART` comment is dropped when a new cover is written) |
 
 - Track and disc numbers are **two fields** in FLAC, not `n/total` in one. The analysis shows
   them joined as `n/total` for both formats, so the same checks apply.
 - Vorbis fields can repeat natively (several `ARTIST` values), and the ID3v2.3 "/" joining
-  caveat does not apply. `options.id3_version` is ignored for FLAC.
+  caveat does not apply. `options.id3_version` is ignored for FLAC and Ogg.
 - Comments/encoder junk: `COMM` in `strip_frames` removes `COMMENT` and `DESCRIPTION`, `TENC`
   removes `ENCODEDBY`/`ENCODER`. Any other entry is taken as a Vorbis field name, so rippers'
   custom fields can be named directly (`strip_frames: ["REPLAYGAIN_ALBUM_GAIN"]`).
-- A folder may mix MP3 and FLAC; both are tagged with the same album/year/disc values so the
+- A folder may mix MP3, FLAC and Ogg; all are tagged with the same album/year/disc values so the
   server groups them as one album.
-- Everything else in a FLAC (seek table, audio frames, other metadata blocks) is untouched.
+- Everything else in the file (FLAC seek table, audio frames, other metadata blocks; Ogg audio pages,
+  `R128_*` gain tags) is untouched.
+- Ogg Speex, Ogg FLAC and Theora files share the `.ogg` / `.oga` extensions but are not
+  handled: the analysis lists them as unreadable and they are left alone.
 
 ## Year conventions (decide with the user)
 

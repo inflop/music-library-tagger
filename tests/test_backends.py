@@ -35,7 +35,7 @@ class BackendContract(unittest.TestCase):
 
     def library(self, kind, tagged=True):
         """One album, two tracks of `kind`: (plan, track paths, payload, backup)."""
-        ext, payload, writer = FACTORIES[kind]
+        ext, payload, writer, _ = FACTORIES[kind]
         root = os.path.join(self.tmp, kind, "Band")
         disc = os.path.join(root, "1974 - Red")
         os.makedirs(disc)
@@ -91,10 +91,10 @@ class BackendContract(unittest.TestCase):
 
     # -- registry ----------------------------------------------------------
     def test_registry_resolves_every_fixture_extension(self):
-        for kind, (ext, _, _) in FACTORIES.items():
+        for kind, (ext, _, _, name) in FACTORIES.items():
             backend = tagio.backend_for("Some Track" + ext.upper())
             self.assertIsNotNone(backend, kind)
-            self.assertEqual(backend.NAME, kind)
+            self.assertEqual(backend.NAME, name)
             self.assertIn(ext, tagio.AUDIO_EXT)
 
     def test_registry_rejects_other_files(self):
@@ -180,17 +180,18 @@ class BackendContract(unittest.TestCase):
             self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
             data = json.loads(Path(backup).read_text(encoding="utf-8"))
             entry = next(iter(data["files"].values()))
-            if kind == "mp3":
+            name = FACTORIES[kind][3]
+            if name == tagio.LEGACY_FORMAT:
                 self.assertNotIn("format", entry)  # the layout older backups use
             else:
-                self.assertEqual(entry["format"], kind)
+                self.assertEqual(entry["format"], name)
             self.assertTrue(entry["had_apic"])
 
     def test_restore_refuses_an_entry_that_lost_its_tag_payload(self):
         # A backup entry with no tag snapshot must not be read as "the file had no
         # tags", which would wipe the tags the file has now.
         for kind in self.each_kind():
-            if kind == tagio.LEGACY_FORMAT:
+            if FACTORIES[kind][3] == tagio.LEGACY_FORMAT:
                 continue  # entries from before other formats existed
             plan, paths, _, backup = self.library(kind)
             self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
@@ -206,8 +207,9 @@ class BackendContract(unittest.TestCase):
             self.assertEqual([Path(p).read_bytes() for p in paths], before)
 
     def test_restore_skips_an_entry_written_for_another_format(self):
-        kinds = list(FACTORIES)
-        a, b = kinds[0], kinds[1]
+        # two variants that belong to different backends
+        a = next(iter(FACTORIES))
+        b = next(k for k, v in FACTORIES.items() if v[3] != FACTORIES[a][3])
         plan, paths, _, backup = self.library(a)
         self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
         data = json.loads(Path(backup).read_text(encoding="utf-8"))

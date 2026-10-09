@@ -2,9 +2,9 @@
 
 ## What this plugin does on your machine
 
-- **Reads** MP3 and FLAC files and image files under the folder you point it at. Other audio
+- **Reads** MP3, FLAC and Ogg Vorbis / Opus files and image files under the folder you point it at. Other audio
   formats are only listed as skipped, never opened.
-- **Writes** ID3 tags (MP3), Vorbis comments (FLAC), embedded artwork and `cover.jpg` files in that same folder, plus a
+- **Writes** ID3 tags (MP3), Vorbis comments (FLAC, Ogg), embedded artwork and `cover.jpg` files in that same folder, plus a
   working directory `.music-tagger/` (analysis, plan, tag backups, downloaded covers).
 - **Never** re-encodes or rewrites the audio stream.
 - **Never** deletes audio files. Image files are copied by default (`move_images_mode:

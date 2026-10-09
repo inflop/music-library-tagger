@@ -30,8 +30,9 @@ import os
 
 import id3_tags
 import flac_tags
+import ogg_tags
 
-BACKENDS = (id3_tags, flac_tags)
+BACKENDS = (id3_tags, flac_tags, ogg_tags)
 
 # Backups written before other formats existed have no "format" on their entries;
 # that has always meant MP3/ID3. New entries omit it for this backend too.
