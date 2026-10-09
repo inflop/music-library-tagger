@@ -2,9 +2,10 @@
 """
 Read-only analysis of a music library folder (one artist / band).
 
-Detects albums (including multi-disc sets), dumps current ID3 tags, finds all
-distinct comment/encoder frames, and measures the pixel dimensions of every
-candidate cover image so the caller can judge quality.
+Detects albums (including multi-disc sets), dumps current tags (ID3 for MP3,
+Vorbis comments for FLAC), finds all distinct comment/encoder fields, and
+measures the pixel dimensions of every candidate cover image so the caller can
+judge quality. Audio in other formats is not read; it is listed as skipped.
 
 Usage:
     python analyze.py "<ROOT>" [--json <out.json>]
@@ -17,11 +18,16 @@ Dependencies: mutagen (required), Pillow (optional, for image dimensions).
 import os, sys, io, re, json, argparse
 from collections import defaultdict
 
+# Not every launcher (runpy.run_path, for one) puts the script's folder on sys.path.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 try:
     from mutagen import File as MFile
 except Exception:
     sys.stderr.write("ERROR: mutagen not installed. Run: python -m pip install mutagen\n")
     raise
+
+import flac_tags
 
 try:
     from PIL import Image
@@ -32,7 +38,10 @@ except Exception:
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 IMG_EXT = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif")
-AUDIO_EXT = (".mp3",)  # extend here if needed (.flac etc. would need different tag handling)
+AUDIO_EXT = (".mp3",) + flac_tags.FLAC_EXT  # formats whose tags can be read and written
+# Audio this tool cannot tag. It is never read or touched, only reported.
+SKIPPED_AUDIO_EXT = (".m4a", ".mp4", ".aac", ".ogg", ".oga", ".opus", ".wav",
+                     ".wv", ".ape", ".wma", ".aiff", ".aif", ".dsf", ".dff", ".mpc")
 
 # A disc subfolder name must START with a disc token (CD1, CD 1, Disc 2, DVD 1,
 # Vol. I, Volume 2, CD One …). Anchoring at the start avoids false matches inside
@@ -56,6 +65,35 @@ def txt(tags, key):
         return "; ".join(str(x) for x in fr.text)
     except Exception:
         return str(fr)
+
+
+def summarize_id3(path):
+    """Tags of one MP3 file in the shape flac_tags.read_summary() returns."""
+    tg = MFile(path).tags
+    fields = []
+    comments = []
+    n_pictures = 0
+    if tg is not None:
+        for k in tg.keys():
+            base = k.split(":")[0]
+            fields.append(base)
+            if base == "APIC":
+                n_pictures += 1
+            if base == "COMM":
+                comments.append(txt(tg, k))
+    return {
+        "title": txt(tg, "TIT2"),
+        "track": txt(tg, "TRCK"),
+        "disc": txt(tg, "TPOS"),
+        "album": txt(tg, "TALB"),
+        "artist": txt(tg, "TPE1"),
+        "album_artist": txt(tg, "TPE2"),
+        "genre": txt(tg, "TCON"),
+        "year": txt(tg, "TDRC") or txt(tg, "TYER"),
+        "n_pictures": n_pictures,
+        "fields": fields,
+        "comments": comments,
+    }
 
 
 def disc_number_from_name(name):
@@ -138,11 +176,20 @@ def main():
 
     # 1) find every folder that directly contains audio files ("disc folders")
     disc_folders = []
+    skipped = defaultdict(lambda: {"count": 0, "folders": set()})
     for dp, dns, fns in os.walk(root):
         # Do not descend into hidden folders such as .music-tagger or .git.
         dns[:] = [name for name in dns if not name.startswith(".")]
         if any(f.lower().endswith(AUDIO_EXT) for f in fns):
             disc_folders.append(dp)
+        for f in fns:
+            ext = os.path.splitext(f)[1].lower()
+            if ext in SKIPPED_AUDIO_EXT:
+                skipped[ext]["count"] += 1
+                skipped[ext]["folders"].add(
+                    os.path.relpath(dp, root).replace("\\", "/"))
+    skipped_audio = {ext: {"count": v["count"], "folders": sorted(v["folders"])}
+                     for ext, v in sorted(skipped.items())}
 
     # 2) group disc folders into albums
     #    album key = parent folder if this disc folder is named like a disc, else itself
@@ -157,6 +204,7 @@ def main():
 
     all_comments = defaultdict(list)
     all_frames = defaultdict(int)
+    formats = defaultdict(int)
     total_tracks = 0
 
     report = []
@@ -170,38 +218,37 @@ def main():
         disc_objs = []
         album_talb = set(); album_year = set(); album_genre = set(); album_artist = set(); album_aa = set()
         for df in discs:
-            mp3s = sorted(f for f in os.listdir(df) if f.lower().endswith(AUDIO_EXT))
+            files = sorted(f for f in os.listdir(df) if f.lower().endswith(AUDIO_EXT))
             tracks = []
-            for fn in mp3s:
+            for fn in files:
                 total_tracks += 1
+                fmt = "flac" if flac_tags.is_flac(fn) else "mp3"
+                formats[fmt] += 1
+                path = os.path.join(df, fn)
                 try:
-                    a = MFile(os.path.join(df, fn)); tg = a.tags
+                    s = flac_tags.read_summary(path) if fmt == "flac" else summarize_id3(path)
                 except Exception:
-                    tracks.append({"file": fn, "error": True}); continue
-                apic = 0
-                if tg is not None:
-                    for k in tg.keys():
-                        base = k.split(":")[0]
-                        all_frames[base] += 1
-                        if base == "APIC":
-                            apic += 1
-                        if base == "COMM":
-                            all_comments[txt(tg, k)].append(rel_album)
-                album_talb.add(txt(tg, "TALB")); album_artist.add(txt(tg, "TPE1"))
-                album_aa.add(txt(tg, "TPE2")); album_genre.add(txt(tg, "TCON"))
-                album_year.add(txt(tg, "TDRC") or txt(tg, "TYER"))
+                    tracks.append({"file": fn, "format": fmt, "error": True}); continue
+                for field in s["fields"]:
+                    all_frames[field] += 1
+                for comment in s["comments"]:
+                    all_comments[comment].append(rel_album)
+                album_talb.add(s["album"]); album_artist.add(s["artist"])
+                album_aa.add(s["album_artist"]); album_genre.add(s["genre"])
+                album_year.add(s["year"])
                 tracks.append({
                     "file": fn,
-                    "title": txt(tg, "TIT2"),
-                    "track": txt(tg, "TRCK"),
-                    "disc": txt(tg, "TPOS"),
-                    "has_cover": apic > 0,
+                    "format": fmt,
+                    "title": s["title"],
+                    "track": s["track"],
+                    "disc": s["disc"],
+                    "has_cover": s["n_pictures"] > 0,
                 })
             disc_objs.append({
                 "path": os.path.relpath(df, root).replace("\\", "/"),
                 "name": os.path.basename(df),
                 "disc_guess": disc_number_from_name(os.path.basename(df)),
-                "n_tracks": len(mp3s),
+                "n_tracks": len(files),
                 "covers": gather_covers(df, root),
                 "tracks": tracks,
             })
@@ -223,7 +270,7 @@ def main():
         # human report
         report.append("=" * 100)
         report.append("ALBUM: %s   %s" % (rel_album, "[MULTI-DISC x%d]" % len(discs) if multi else ""))
-        report.append("  TALB: %s" % album_obj["current_album_names"])
+        report.append("  album tag: %s" % album_obj["current_album_names"])
         report.append("  year: %s  genre: %s  artist: %s  albumartist: %s"
                       % (album_obj["current_years"], album_obj["current_genres"],
                          album_obj["current_artists"], album_obj["current_album_artists"]))
@@ -238,10 +285,17 @@ def main():
 
     report.append("\n" + "=" * 100)
     report.append("SUMMARY: %d albums, %d tracks total" % (len(result_albums), total_tracks))
-    report.append("FRAME TYPES PRESENT: %s" % dict(sorted(all_frames.items(), key=lambda x: -x[1])))
-    report.append("\nDISTINCT COMMENT (COMM) VALUES:")
+    report.append("FORMATS: %s" % dict(sorted(formats.items())))
+    report.append("TAG FIELDS PRESENT (ID3 frames / Vorbis fields): %s"
+                  % dict(sorted(all_frames.items(), key=lambda x: -x[1])))
+    report.append("\nDISTINCT COMMENT VALUES (ID3 COMM / Vorbis COMMENT):")
     for val, folders in sorted(all_comments.items(), key=lambda x: -len(x[1])):
         report.append("  %r  -> %d files, e.g. %s" % (val, len(folders), sorted(set(folders))[:3]))
+    if skipped_audio:
+        report.append("\nSKIPPED AUDIO (format not supported, left untouched):")
+        for ext, info in skipped_audio.items():
+            report.append("  %s: %d files in %d folders, e.g. %s"
+                          % (ext, info["count"], len(info["folders"]), info["folders"][:3]))
 
     print("\n".join(report))
 
@@ -253,8 +307,10 @@ def main():
             "root": root,
             "n_albums": len(result_albums),
             "n_tracks": total_tracks,
+            "formats": dict(formats),
             "frame_types": dict(all_frames),
             "comments": {k: len(v) for k, v in all_comments.items()},
+            "skipped_audio": skipped_audio,
             "albums": result_albums,
         }
         with open(args.json, "w", encoding="utf-8") as f:

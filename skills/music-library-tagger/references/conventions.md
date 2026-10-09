@@ -5,7 +5,7 @@ Read before building a plan. These encode the decisions this skill was designed 
 ## Privacy (hard rule)
 
 - Never write identifying data — real name, email, username, machine paths — into ID3
-  tags, `cover.jpg`, filenames, or image metadata (EXIF).
+  tags, Vorbis comments, `cover.jpg`, filenames, or image metadata (EXIF).
 - Only objective release data goes into tags: album, artist, title, year, track/disc
   numbers, genre, cover.
 - Strip environment-revealing frames: `TENC` (encoder), `COMM` (comments), and by default
@@ -32,6 +32,31 @@ Read before building a plan. These encode the decisions this skill was designed 
 - **Cover art priority**: servers look at embedded art and/or a folder image
   (`cover.*`, `front.*`, `folder.*`). Embedding + a folder `cover.jpg` is the most portable.
   Navidrome's `CoverArtPriority` controls precedence.
+
+## FLAC (Vorbis comments)
+
+FLAC files carry Vorbis comments instead of ID3 frames. The plan stays the same; the tool maps
+fields as follows when it writes:
+
+| Concept | MP3 (ID3) | FLAC (Vorbis) |
+|---|---|---|
+| Album / Title / Artist / Genre | `TALB` / `TIT2` / `TPE1` / `TCON` | `ALBUM` / `TITLE` / `ARTIST` / `GENRE` |
+| Album artist | `TPE2` | `ALBUMARTIST` |
+| Year | `TDRC` | `DATE` (a stale `YEAR` is removed) |
+| Track | `TRCK` = `n/total` | `TRACKNUMBER` + `TOTALTRACKS` (stale `TRACKTOTAL` removed) |
+| Disc | `TPOS` = `n/total` | `DISCNUMBER` + `TOTALDISCS` (stale `DISCTOTAL` removed) |
+| Cover | `APIC` | one FLAC `Picture` block, type 3 (front) |
+
+- Track and disc numbers are **two fields** in FLAC, not `n/total` in one. The analysis shows
+  them joined as `n/total` for both formats, so the same checks apply.
+- Vorbis fields can repeat natively (several `ARTIST` values), and the ID3v2.3 "/" joining
+  caveat does not apply. `options.id3_version` is ignored for FLAC.
+- Comments/encoder junk: `COMM` in `strip_frames` removes `COMMENT` and `DESCRIPTION`, `TENC`
+  removes `ENCODEDBY`/`ENCODER`. Any other entry is taken as a Vorbis field name, so rippers'
+  custom fields can be named directly (`strip_frames: ["REPLAYGAIN_ALBUM_GAIN"]`).
+- A folder may mix MP3 and FLAC; both are tagged with the same album/year/disc values so the
+  server groups them as one album.
+- Everything else in a FLAC (seek table, audio frames, other metadata blocks) is untouched.
 
 ## Year conventions (decide with the user)
 

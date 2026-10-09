@@ -2,8 +2,9 @@
 
 ## What this plugin does on your machine
 
-- **Reads** MP3 files and image files under the folder you point it at.
-- **Writes** ID3 tags, embedded artwork and `cover.jpg` files in that same folder, plus a
+- **Reads** MP3 and FLAC files and image files under the folder you point it at. Other audio
+  formats are only listed as skipped, never opened.
+- **Writes** ID3 tags (MP3), Vorbis comments (FLAC), embedded artwork and `cover.jpg` files in that same folder, plus a
   working directory `.music-tagger/` (analysis, plan, tag backups, downloaded covers).
 - **Never** re-encodes or rewrites the audio stream.
 - **Never** deletes audio files. Image files are copied by default (`move_images_mode:
@@ -26,7 +27,7 @@ No API keys, no accounts, no telemetry, no analytics, nothing is uploaded.
 
 The skill's hard rule is that **no identifying data is written anywhere**:
 
-- No real name, e-mail, username or machine path in ID3 tags, filenames or `cover.jpg`.
+- No real name, e-mail, username or machine path in ID3 tags, Vorbis comments, filenames or `cover.jpg`.
 - Environment-revealing frames (`TENC` encoder, `COMM` comments, and optionally `TXXX`,
   `PRIV`, `TSSE`, `WXXX`) are offered for stripping.
 - Cover images are re-encoded through Pillow, which drops source EXIF (which can carry a

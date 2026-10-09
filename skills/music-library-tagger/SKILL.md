@@ -1,7 +1,7 @@
 ---
 name: music-library-tagger
 description: >
-  Clean up an artist's album collection (MP3/ID3) for a self-hosted music
+  Clean up an artist's album collection (MP3/ID3 and FLAC) for a self-hosted music
   server such as Navidrome: correct album names, release years, track titles,
   genres, multi-disc numbering (disc 1/2/3…), album artist, and cover art
   (embedded + cover.jpg), verifying facts against public sources (MusicBrainz /
@@ -18,10 +18,12 @@ Turn a messy single-artist album folder into a clean, consistent library that a
 music server (Navidrome, Plex, Jellyfin, Subsonic…) displays correctly.
 
 **Golden rules**
-- **Never touch the audio stream** — only ID3 tags and artwork.
-- **Always back up first** (`apply_plan.py` backs up every text frame and every embedded
+- **Never touch the audio stream** — only tags (ID3 for MP3, Vorbis comments for FLAC) and
+  artwork. Other audio formats (m4a, ogg, opus, wav…) are not supported: `analyze.py` lists
+  them as skipped — tell the user, and never try to tag them by hand.
+- **Always back up first** (`apply_plan.py` backs up every text tag and every embedded
   cover before any change, so a restore brings back the user's original covers too;
-  ratings, lyrics and other non-text frames are left untouched rather than rewritten).
+  ratings, lyrics and other non-text ID3 frames are left untouched rather than rewritten).
 - **Verify against public sources** — don't trust existing tags or folder names blindly.
 - **Privacy**: never write personally identifying data (name, email, username, local
   paths) into tags, `cover.jpg`, filenames, or image metadata. Web requests use a
@@ -50,8 +52,10 @@ Run:
 `python "$SKILL/scripts/analyze.py" "<ROOT>" --json "<ROOT>/.music-tagger/analysis.json"`
 
 This detects albums (incl. multi-disc sets grouped from `CD1/CD2/Vol. I…` subfolders),
-dumps current tags, lists every distinct comment/encoder frame, and measures cover
-dimensions. Read the report. Note: file **size in KB is not quality** — check pixel
+dumps current tags (MP3 and FLAC alike; the report has a `FORMATS` line), lists every
+distinct comment/encoder field, and measures cover dimensions. If a `SKIPPED AUDIO` section
+appears, some files are in a format this tool cannot tag — say so before planning. Read
+the report. Note: file **size in KB is not quality** — check pixel
 dimensions, and beware "front" scans that are really 2:1 gatefold spreads.
 
 Summarize for the user what's wrong: inconsistent/garbage album names, wrong/missing
@@ -64,8 +68,8 @@ Use `AskUserQuestion`. Standard set (adapt to what analysis found):
 1. **Multiple editions** of the same album (Original / remaster / anniversary): append an
    edition suffix to the album title (keeps them separate) vs. clean canonical title.
 2. **Year field**: the edition's actual release year vs. the original album year.
-3. **Cover source**: web-first (Cover Art Archive) vs. local scans; and embed-in-MP3 +
-   `cover.jpg` vs. one of them.
+3. **Cover source**: web-first (Cover Art Archive) vs. local scans; and embed in the
+   audio files + `cover.jpg` vs. one of them.
 4. **Genre**: unify to one value vs. leave as-is.
 5. **Comments/encoder frames**: strip vs. keep (show the distinct COMM values first — some
    may be useful liner notes, most are ripper junk).
@@ -97,7 +101,10 @@ Then build the machine-readable `<ROOT>/.music-tagger/plan.json` that
 `apply_plan.py` consumes (schema documented at the top of `apply_plan.py`). Fill titles,
 years, `track`/`track_total`, `disc`/`disc_total`, chosen `cover` per disc, optional
 `move_images`, and the global `options` (artist, album_artist, genre, strip_frames,
-id3_version=3, cover flags, move_images_mode).
+id3_version=3, cover flags, move_images_mode). The plan is the same for MP3 and FLAC
+(`track` entries just name the `.mp3` or `.flac` file); `id3_version` only affects MP3,
+and `strip_frames` takes ID3 ids (`COMM`, `TENC`…) which are mapped to their Vorbis
+fields for FLAC.
 
 ## Phase 5 — Covers
 
