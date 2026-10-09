@@ -1,7 +1,7 @@
 ---
 name: music-library-tagger
 description: >
-  Clean up an artist's album collection (MP3/ID3 and FLAC) for a self-hosted music
+  Clean up an artist's album collection (MP3/ID3, FLAC, Ogg/Opus, M4A) for a self-hosted music
   server such as Navidrome: correct album names, release years, track titles,
   genres, multi-disc numbering (disc 1/2/3…), album artist, and cover art
   (embedded + cover.jpg), verifying facts against public sources (MusicBrainz /
@@ -18,8 +18,8 @@ Turn a messy single-artist album folder into a clean, consistent library that a
 music server (Navidrome, Plex, Jellyfin, Subsonic…) displays correctly.
 
 **Golden rules**
-- **Never touch the audio stream** — only tags (ID3 for MP3, Vorbis comments for FLAC) and
-  artwork. Other audio formats (m4a, ogg, opus, wav…) are not supported: `analyze.py` lists
+- **Never touch the audio stream** — only tags (ID3 for MP3, Vorbis comments for FLAC and Ogg, MP4 atoms for M4A) and
+  artwork. Other audio formats (wav, wv, ape, mp4/m4b…) are not supported: `analyze.py` lists
   them as skipped — tell the user, and never try to tag them by hand.
 - **Always back up first** (`apply_plan.py` backs up every text tag and every embedded
   cover before any change, so a restore brings back the user's original covers too;
@@ -52,7 +52,7 @@ Run:
 `python "$SKILL/scripts/analyze.py" "<ROOT>" --json "<ROOT>/.music-tagger/analysis.json"`
 
 This detects albums (incl. multi-disc sets grouped from `CD1/CD2/Vol. I…` subfolders),
-dumps current tags (MP3 and FLAC alike; the report has a `FORMATS` line), lists every
+dumps current tags (MP3, FLAC, Ogg and M4A alike; the report has a `FORMATS` line), lists every
 distinct comment/encoder field, and measures cover dimensions. If a `SKIPPED AUDIO` section
 appears, some files are in a format this tool cannot tag — say so before planning. Read
 the report. Note: file **size in KB is not quality** — check pixel
@@ -101,10 +101,10 @@ Then build the machine-readable `<ROOT>/.music-tagger/plan.json` that
 `apply_plan.py` consumes (schema documented at the top of `apply_plan.py`). Fill titles,
 years, `track`/`track_total`, `disc`/`disc_total`, chosen `cover` per disc, optional
 `move_images`, and the global `options` (artist, album_artist, genre, strip_frames,
-id3_version=3, cover flags, move_images_mode). The plan is the same for MP3 and FLAC
-(`track` entries just name the `.mp3` or `.flac` file); `id3_version` only affects MP3,
+id3_version=3, cover flags, move_images_mode). The plan is the same for every format
+(`track` entries just name the `.mp3`, `.flac`, `.ogg`, `.opus` or `.m4a` file); `id3_version` only affects MP3,
 and `strip_frames` takes ID3 ids (`COMM`, `TENC`…) which are mapped to their Vorbis
-fields for FLAC.
+fields for FLAC and Ogg and to MP4 atoms for M4A.
 
 ## Phase 5 — Covers
 

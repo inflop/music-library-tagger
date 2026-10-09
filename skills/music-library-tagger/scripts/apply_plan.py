@@ -6,26 +6,15 @@ Before writing, backs up every text frame and every embedded cover of the files
 it is about to touch, so --restore can undo the run. Artwork is copied out to a
 sidecar folder next to the backup JSON and re-embedded verbatim.
 
-FLAC files (see flac_tags.py) are handled the same way with Vorbis comments and
-Picture blocks: the backup stores every comment as a [name, value] pair, and a
-restore replaces all comments and pictures with them. A FLAC that had no comment
-block ends up without one. The plan is the same for both formats; options.id3_version
-only applies to MP3, and options.strip_frames takes ID3 ids (mapped to Vorbis
-fields for FLAC) or Vorbis field names.
-
-Frames that are not text frames (POPM ratings, UFID identifiers, USLT lyrics,
-PRIV...) are neither backed up nor rewritten: apply() does not touch them and
-restore() leaves them in place. The exception is a non-text frame named in
-options.strip_frames -- deleting that is deliberate and cannot be undone.
-
-A restore writes the tag back in the ID3v2 version the file had, as far as
-mutagen can write one: v2.3 or v2.4. A v2.2 tag is read but cannot be written
-back (apply() has already rewritten it as v2.3 by then), so it restores as v2.3.
-A file that had no ID3v2 tag ends up with none again rather than an empty one,
-and a file that had only ID3v1 keeps just its ID3v1.
-Note that ID3v2.3 cannot store several values in one frame, so writing a v2.3
-tag joins them with "/" -- a property of the format, not of the backup, which
-keeps the values apart.
+This script knows nothing about tag formats. Each file is handed to the backend
+that tagio.py picks by extension (ID3 for MP3, Vorbis comments for FLAC, ...), and
+the format-specific rules -- which frames or fields are backed up, how a restore
+treats tags the tool never wrote, ID3 versions -- are documented in that backend's
+module. A backup entry carries "format": <backend name>; an entry without it is
+ID3 (the layout from before other formats existed), so old backups still restore.
+The plan is the same for every format: options.id3_version only applies to MP3,
+and options.strip_frames takes ID3 frame ids (mapped to the native field names
+where there are any) or native field names.
 Only tags and artwork are touched -- the audio stream is never re-encoded.
 
 Usage:
@@ -36,11 +25,11 @@ plan.json schema (all paths are RELATIVE to "root", forward slashes ok):
 {
   "root": "G:/Music/Some Band",
   "options": {
-     "artist": "Some Band",              # -> TPE1 on every track (optional)
-     "album_artist": "Some Band",        # -> TPE2 on every track (optional)
-     "genre": "Progressive Rock",        # -> TCON default (optional)
-     "strip_frames": ["COMM", "TENC"],   # frame base names to delete
-     "id3_version": 3,                   # save as ID3v2.3 (widest compatibility)
+     "artist": "Some Band",              # artist tag on every track (optional)
+     "album_artist": "Some Band",        # album artist tag on every track (optional)
+     "genre": "Progressive Rock",        # genre default (optional)
+     "strip_frames": ["COMM", "TENC"],   # ID3 frame ids (or native field names) to delete
+     "id3_version": 3,                   # MP3 only: save as ID3v2.3 (widest compatibility)
      "cover_embed": true,
      "cover_folder_jpg": true,
      "cover_max_px": 1400,               # downscale embedded/cover.jpg if larger
@@ -49,14 +38,14 @@ plan.json schema (all paths are RELATIVE to "root", forward slashes ok):
   "albums": [
     {
       "album": "Red",
-      "year": 1974,                       # TDRC
+      "year": 1974,                       # release year tag
       "genre": "Progressive Rock",        # optional per-album override
       "album_path": "ORIGINAL/1974 - Red",# where album-level cover.jpg is written
       "album_cover": "ORIGINAL/1974 - Red/covers/Cover.jpg",  # optional
       "discs": [
         {
           "path": "ORIGINAL/1974 - Red",
-          "disc": 1, "disc_total": 1,     # omit / null for single-disc (no TPOS)
+          "disc": 1, "disc_total": 1,     # omit / null for single-disc (no disc tag)
           "cover": "ORIGINAL/1974 - Red/covers/Cover.jpg",     # embedded + cover.jpg here
           "move_images": [["…/covers/Disc 1.jpg", "…/CD 1"]],  # optional [src, dst_dir]
           "tracks": [
@@ -72,11 +61,7 @@ import os, sys, io, json, time, argparse, shutil, hashlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from mutagen.mp3 import MP3
-from mutagen.id3 import (ID3, ID3NoHeaderError, Frames, TextFrame, TALB, TPE1,
-                         TPE2, TIT2, TCON, TDRC, TRCK, TPOS, APIC)
-
-import flac_tags
+import tagio
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
@@ -95,11 +80,6 @@ def rp(root, rel):
 
 ART_EXT = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
            "image/gif": ".gif", "image/webp": ".webp"}
-
-# What analyze.py collects and apply() writes. A restore must not stray outside
-# it: mutagen will happily prepend an ID3 tag to any file it is handed.
-AUDIO_EXT = (".mp3",) + flac_tags.FLAC_EXT
-
 
 def within(base, rel):
     """Resolve `rel` under `base`, or return None if it escapes.
@@ -126,42 +106,19 @@ def within(base, rel):
     return target
 
 
-def rebuild_frame(key, vals):
-    """Recreate a text frame from its backup key and values.
+def unreadable_reason(backend, path):
+    """None if the backend can open the file, else why it cannot.
 
-    Uses mutagen's own frame registry rather than a hand-kept map, so frames
-    like TCOM/TPUB/TOPE survive a restore instead of being silently dropped.
+    The extension alone proves nothing: a Speex stream named .ogg, a truncated or
+    mislabelled file. Such a file is skipped by the backup and by apply alike, so a
+    file that was not backed up is never written, and one bad file does not abort
+    the run (or, in a dry run, get counted as taggable).
     """
-    base, _, rest = key.partition(":")
-    cls = Frames.get(base)
-    # Only genuine text frames take a list of strings. USLT.text, for one, is a
-    # plain string -- feeding it a list yields lyrics that read "['w', 'e', ...".
-    if cls is None or not issubclass(cls, TextFrame):
-        return None
-    kw = {"encoding": 3, "text": vals}
-    # A descriptor may itself contain ":", so neither key can be split naively.
-    if base == "TXXX":
-        # Key is TXXX:<desc> -- everything after the frame id is the descriptor.
-        kw["desc"] = rest
-    elif base == "COMM":
-        # Key is COMM:<desc>:<lang>. Split from the right, and only believe the
-        # tail if it looks like a language code; otherwise it is part of desc.
-        desc, sep, lang = rest.rpartition(":")
-        if sep and len(lang) == 3:
-            kw["desc"], kw["lang"] = desc, lang
-        else:
-            kw["desc"], kw["lang"] = rest, "eng"
     try:
-        return cls(**kw)
-    except Exception:
-        return None
-
-
-def load_id3(path):
-    try:
-        return ID3(path)
-    except ID3NoHeaderError:
-        return ID3()
+        backend.read_summary(path)
+    except Exception as e:
+        return "%s: %s" % (type(e).__name__, e)
+    return None
 
 
 def process_cover_bytes(img_path, max_px):
@@ -207,64 +164,30 @@ def backup_tags(root, plan, backup_path):
                 fpath = os.path.join(dpath, tr["file"])
                 if not os.path.isfile(fpath):
                     continue
-                if flac_tags.is_flac(fpath):
-                    comments, pictures = flac_tags.snapshot(fpath)
-                    art = []
-                    for pic in pictures:
-                        if not pic["data"]:
-                            continue
-                        digest, name = stash(pic["data"], pic["mime"])
-                        art.append({
-                            "sha1": digest, "file": "%s/%s" % (art_rel, name),
-                            "mime": pic["mime"] or "image/jpeg",
-                            "type": pic["type"], "desc": pic["desc"] or "",
-                            "width": pic["width"], "height": pic["height"],
-                            "depth": pic["depth"], "colors": pic["colors"],
-                        })
-                    data["files"][os.path.relpath(fpath, root).replace("\\", "/")] = {
-                        "format": "flac", "vorbis": comments,
-                        "had_apic": bool(art), "apic": art}
+                backend = tagio.backend_for(fpath)
+                if backend is None:
+                    log("  !! not a supported audio file, not backed up: %s" % fpath)
                     continue
-                try:
-                    tags = ID3(fpath)
-                    # Remember the tag version so a restore does not quietly
-                    # rewrite a v2.4 library as v2.3 (which cannot hold multiple
-                    # values per frame and would join them with "/").
-                    id3v = tags.version[1]
-                except ID3NoHeaderError:
-                    tags = ID3()
-                    id3v = None
-                frames = {}
+                why = unreadable_reason(backend, fpath)
+                if why:
+                    log("  !! cannot read %s (%s): not backed up, and apply will not touch it"
+                        % (fpath, why))
+                    continue
+                payload, pictures = backend.snapshot(fpath)
                 art = []
-                for key in list(tags.keys()):
-                    base = key.split(":")[0]
-                    fr = tags[key]
-                    if base == "APIC":
-                        blob = getattr(fr, "data", None)
-                        if not blob:
-                            continue
-                        digest, name = stash(blob, getattr(fr, "mime", ""))
-                        art.append({
-                            "sha1": digest,
-                            "file": "%s/%s" % (art_rel, name),
-                            "mime": getattr(fr, "mime", "") or "image/jpeg",
-                            "type": int(getattr(fr, "type", 3)),
-                            "desc": getattr(fr, "desc", "") or "",
-                        })
+                for pic in pictures:
+                    if not pic["data"]:
                         continue
-                    if not isinstance(fr, TextFrame):
-                        # POPM/UFID/USLT/PRIV: iterating .text would mangle them
-                        # (USLT.text is a string, so it splits into characters).
-                        # apply() never writes them and restore() leaves them
-                        # alone, so they need no backup.
-                        continue
-                    try:
-                        frames[key] = [str(x) for x in fr.text]
-                    except Exception:
-                        pass
-                data["files"][os.path.relpath(fpath, root).replace("\\", "/")] = {
-                    "frames": frames, "had_apic": bool(art), "apic": art,
-                    "id3_version": id3v}
+                    digest, name = stash(pic["data"], pic["mime"])
+                    item = {k: v for k, v in pic.items() if k != "data"}
+                    item.update(sha1=digest, file="%s/%s" % (art_rel, name),
+                                mime=pic["mime"] or "image/jpeg",
+                                desc=pic["desc"] or "")
+                    art.append(item)
+                entry = dict(payload, had_apic=bool(art), apic=art)
+                if backend.NAME != tagio.LEGACY_FORMAT:
+                    entry["format"] = backend.NAME
+                data["files"][os.path.relpath(fpath, root).replace("\\", "/")] = entry
     with open(backup_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
     log("Backup of %d files (%d distinct artwork images) -> %s"
@@ -325,71 +248,6 @@ def load_artwork(art, bdir):
     return out
 
 
-def restore_flac_file(fpath, info, bdir):
-    """Rewrite one FLAC file from its backup entry; returns the artwork count."""
-    if "vorbis" not in info:
-        raise ValueError("the FLAC backup entry has no Vorbis comments snapshot")
-    comments = info["vorbis"]
-    if comments is not None:
-        # [[name, value], ...] -- anything else is a damaged or hand-edited entry.
-        if not isinstance(comments, list) or not all(
-                isinstance(c, list) and len(c) == 2
-                and all(isinstance(x, str) for x in c) for c in comments):
-            raise ValueError("the Vorbis comments in the backup are malformed")
-    pictures = []
-    for art in load_artwork(info.get("apic"), bdir):
-        extra = {}
-        for field in ("width", "height", "depth", "colors"):
-            try:
-                extra[field] = int(art["item"].get(field, 0))
-            except (TypeError, ValueError):
-                extra[field] = 0
-        pictures.append(dict(data=art["data"], mime=art["mime"],
-                             type=art["type"], desc=art["desc"], **extra))
-    flac_tags.rewrite(fpath, comments, pictures)
-    return len(pictures)
-
-
-def restore_file(fpath, info, bdir):
-    """Rewrite one file from its backup entry; returns the artwork count."""
-    # Start from what is on disk and replace only what this tool manages: text
-    # frames and artwork. Frames it never wrote -- POPM ratings, UFID
-    # identifiers, USLT lyrics -- stay untouched instead of being wiped by a
-    # rebuild from scratch.
-    tags = load_id3(fpath)
-    for key in list(tags.keys()):
-        if isinstance(tags[key], TextFrame) or key.split(":")[0] == "APIC":
-            del tags[key]
-    for key, vals in (info.get("frames") or {}).items():
-        fr = rebuild_frame(key, vals)
-        if fr is not None:
-            tags.add(fr)
-
-    n_art = 0
-    for art in load_artwork(info.get("apic"), bdir):
-        tags.add(APIC(encoding=3, mime=art["mime"], type=art["type"],
-                      desc=art["desc"], data=art["data"]))
-        n_art += 1
-
-    ver = info.get("id3_version")
-    if ver is None and not tags:
-        # The file carried no ID3 tag at all before the run. Leave it that way
-        # instead of parking an empty tag and its padding on it. An ID3v1 tag,
-        # if one somehow exists, is never this tool's to remove.
-        tags.delete(fpath, delete_v1=False, delete_v2=True)
-    elif ver == 1:
-        # ID3v1 only. Both steps are needed. mutagen's save() defaults to v1=1,
-        # "update the v1 tag if one is present", so apply() has already rewritten
-        # the v1 fields with its own values -- deleting the added v2 tag alone
-        # would leave those in place and revert nothing. Write v1 back from the
-        # backup first, then take the v2 tag away.
-        tags.save(fpath, v1=2, v2_version=3)
-        tags.delete(fpath, delete_v1=False, delete_v2=True)
-    else:
-        tags.save(fpath, v2_version=ver if ver in (3, 4) else 3)
-    return n_art
-
-
 def restore(backup_path):
     with open(backup_path, encoding="utf-8") as f:
         data = json.load(f)
@@ -414,14 +272,13 @@ def restore(backup_path):
         if fpath is None:
             log("  !! refusing path outside the backup root: %s" % rel)
             continue
-        if os.path.splitext(fpath)[1].lower() not in AUDIO_EXT:
-            log("  !! refusing a target that is not an MP3 or FLAC file: %s" % rel)
+        backend = tagio.backend_for(fpath)
+        if backend is None:
+            log("  !! refusing a target that is not a supported audio file: %s" % rel)
             continue
         if not os.path.isfile(fpath):
             continue
-        # Backups from before FLAC support carry no "format" and are ID3.
-        is_flac = flac_tags.is_flac(fpath)
-        if info.get("format", "id3") != ("flac" if is_flac else "id3"):
+        if info.get("format", tagio.LEGACY_FORMAT) != backend.NAME:
             log("  !! backup entry does not match the file type, skipped: %s" % rel)
             failed += 1
             continue
@@ -430,8 +287,9 @@ def restore(backup_path):
             # recoverable, so say so instead of dropping it silently.
             legacy += 1
         try:
-            n_art += (restore_flac_file if is_flac else restore_file)(
-                fpath, info, bdir)
+            pictures = load_artwork(info.get("apic"), bdir)
+            backend.restore(fpath, info, pictures)
+            n_art += len(pictures)
         except Exception as e:
             # Undoing a run halfway is worse than skipping one file, so a damaged
             # entry is reported and stepped over rather than aborting the rest.
@@ -454,7 +312,6 @@ def apply(plan, dry):
     root = os.path.abspath(rp(os.getcwd(), plan["root"]) if not os.path.isabs(plan["root"]) else plan["root"])
     opt = plan.get("options", {})
     strip = set(opt.get("strip_frames", []))
-    id3v = opt.get("id3_version", 3)
     embed = opt.get("cover_embed", True)
     folder_jpg = opt.get("cover_folder_jpg", True)
     max_px = opt.get("cover_max_px", 1400)
@@ -463,7 +320,8 @@ def apply(plan, dry):
     def_aa = opt.get("album_artist")
     def_genre = opt.get("genre")
 
-    changes = {"tracks": 0, "covers_embedded": 0, "cover_jpgs": 0, "moved": 0}
+    changes = {"tracks": 0, "covers_embedded": 0, "cover_jpgs": 0, "moved": 0,
+               "unreadable": 0}
 
     for alb in plan["albums"]:
         album = alb["album"]
@@ -508,60 +366,27 @@ def apply(plan, dry):
                 if not os.path.isfile(fpath):
                     log("  !! missing file: %s" % fpath); continue
 
-                ext = os.path.splitext(fpath)[1].lower()
-                if ext not in AUDIO_EXT:
-                    log("  !! refusing a target that is not an MP3 or FLAC file: %s" % fpath)
+                backend = tagio.backend_for(fpath)
+                if backend is None:
+                    log("  !! not a supported audio file, skipped: %s" % fpath)
                     continue
-                if flac_tags.is_flac(fpath):
-                    use_cover = embed and has_cover
-                    if not dry:
-                        flac_tags.write(
-                            fpath, album=album, title=tr.get("title"),
-                            artist=artist, album_artist=aa, year=year,
-                            genre=genre, track=tr.get("track"),
-                            track_total=tr.get("track_total"), disc=disc_no,
-                            disc_total=disc_total, strip=strip,
-                            cover=cover_bytes if use_cover else None)
-                    if use_cover:
-                        changes["covers_embedded"] += 1
-                    changes["tracks"] += 1
+                why = unreadable_reason(backend, fpath)
+                if why:
+                    log("  !! cannot read %s (%s), skipped" % (fpath, why))
+                    changes["unreadable"] += 1
                     continue
 
-                tags = load_id3(fpath)
-
-                # strip unwanted frames
-                for key in list(tags.keys()):
-                    if key.split(":")[0] in strip:
-                        del tags[key]
-
-                def setf(cls, val):
-                    if val is None or val == "":
-                        return
-                    tags.setall(cls.__name__, [cls(encoding=3, text=[str(val)])])
-
-                setf(TALB, album)
-                setf(TIT2, tr.get("title"))
-                if artist: setf(TPE1, artist)
-                if aa: setf(TPE2, aa)
-                if year: setf(TDRC, year)
-                if genre: setf(TCON, genre)
-                if tr.get("track") is not None:
-                    trck = "%s/%s" % (tr["track"], tr["track_total"]) if tr.get("track_total") else str(tr["track"])
-                    setf(TRCK, trck)
-                if disc_no:
-                    pos = "%s/%s" % (disc_no, disc_total) if disc_total else str(disc_no)
-                    setf(TPOS, pos)
-
-                # embed cover
-                if embed and has_cover:
-                    if not dry:
-                        tags.delall("APIC")
-                        tags.add(APIC(encoding=3, mime="image/jpeg", type=3,
-                                      desc="Front", data=cover_bytes))
-                    changes["covers_embedded"] += 1
-
+                use_cover = embed and has_cover
                 if not dry:
-                    tags.save(fpath, v2_version=id3v)
+                    backend.write(fpath, {
+                        "album": album, "title": tr.get("title"),
+                        "artist": artist, "album_artist": aa, "year": year,
+                        "genre": genre, "track": tr.get("track"),
+                        "track_total": tr.get("track_total"), "disc": disc_no,
+                        "disc_total": disc_total,
+                    }, strip, cover_bytes if use_cover else None, opt)
+                if use_cover:
+                    changes["covers_embedded"] += 1
                 changes["tracks"] += 1
 
             # write disc-level cover.jpg

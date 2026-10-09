@@ -11,11 +11,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   MP3/ID3, and `apply_plan.py` writes, backs up and restores them. A folder may mix both
   formats. `plan.json` is unchanged; `id3_version` is ignored for FLAC and `strip_frames`
   accepts ID3 frame ids (`COMM`, `TENC`, ...) or Vorbis field names.
-- `analyze.py` lists audio it cannot tag (`.m4a`, `.ogg`, `.opus`, `.wav`, ...) under
+- `analyze.py` lists audio it cannot tag (for example `.wav`, `.wv`, `.ape`) under
   `skipped_audio` in the JSON and in a `SKIPPED AUDIO` section of the report, instead of
   silently leaving those albums out. The JSON also gains `formats` and a per-track `format`.
 
+- Ogg Vorbis and Opus support (#13): `.ogg`, `.oga` and `.opus` are read, tagged, backed up and
+  restored like FLAC, sharing its Vorbis field mapping. The cover is a base64
+  `METADATA_BLOCK_PICTURE` comment; the backup keeps the image in its sidecar folder, not in the
+  JSON. Speex, Ogg FLAC and Theora streams are left alone and shown as unreadable.
+
+- M4A support (#14): AAC and Apple Lossless `.m4a` files are read, tagged, backed up and restored
+  through MP4 atoms (`©alb`, `aART`, `trkn`/`disk` pairs, `covr`). Free-form atoms, integers and
+  booleans are backed up with their value types and restored exactly; the audio data is unchanged and
+  the chunk offsets (`stco` and `co64`) are rewritten to keep pointing at it. `.mp4` and `.m4b` stay reported as skipped.
+
+- `apply_plan.py` skips a file its backend cannot read (a Speex stream named `.ogg`, a truncated or
+  mislabelled file) in the backup, the dry run and the real run alike: it is reported as `cannot read`,
+  counted as `unreadable` in the summary, never written, and no longer aborts the run. This includes a file whose
+  content is another format than its extension says (a FLAC renamed `.mp3`), which the MP3 backend
+  used to tag by prepending an ID3 header; restore refuses such a file too.
+
 ### Changed
+- Tag formats are now backends behind one interface (#12): `scripts/id3_tags.py` and
+  `scripts/flac_tags.py`, registered in `scripts/tagio.py`. `apply_plan.py` and `analyze.py` no
+  longer contain format-specific code; the MP3 behaviour and backup layout are unchanged. The
+  restore message for an unsupported target now reads "not a supported audio file".
 - Backup entries for FLAC files carry `"format": "flac"` and a `vorbis` list of
   `[name, value]` pairs. Entries without `format` are read as ID3, so existing backups
   still restore.

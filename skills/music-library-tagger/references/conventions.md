@@ -33,9 +33,9 @@ Read before building a plan. These encode the decisions this skill was designed 
   (`cover.*`, `front.*`, `folder.*`). Embedding + a folder `cover.jpg` is the most portable.
   Navidrome's `CoverArtPriority` controls precedence.
 
-## FLAC (Vorbis comments)
+## FLAC and Ogg Vorbis / Opus (Vorbis comments)
 
-FLAC files carry Vorbis comments instead of ID3 frames. The plan stays the same; the tool maps
+FLAC and Ogg files carry Vorbis comments instead of ID3 frames. The plan stays the same; the tool maps
 fields as follows when it writes:
 
 | Concept | MP3 (ID3) | FLAC (Vorbis) |
@@ -45,18 +45,43 @@ fields as follows when it writes:
 | Year | `TDRC` | `DATE` (a stale `YEAR` is removed) |
 | Track | `TRCK` = `n/total` | `TRACKNUMBER` + `TOTALTRACKS` (stale `TRACKTOTAL` removed) |
 | Disc | `TPOS` = `n/total` | `DISCNUMBER` + `TOTALDISCS` (stale `DISCTOTAL` removed) |
-| Cover | `APIC` | one FLAC `Picture` block, type 3 (front) |
+| Cover | `APIC` | FLAC: one `Picture` block, type 3 (front). Ogg/Opus: a base64 `METADATA_BLOCK_PICTURE` comment holding the same structure (a legacy `COVERART` comment is dropped when a new cover is written) |
 
 - Track and disc numbers are **two fields** in FLAC, not `n/total` in one. The analysis shows
   them joined as `n/total` for both formats, so the same checks apply.
 - Vorbis fields can repeat natively (several `ARTIST` values), and the ID3v2.3 "/" joining
-  caveat does not apply. `options.id3_version` is ignored for FLAC.
+  caveat does not apply. `options.id3_version` is ignored for FLAC and Ogg.
 - Comments/encoder junk: `COMM` in `strip_frames` removes `COMMENT` and `DESCRIPTION`, `TENC`
   removes `ENCODEDBY`/`ENCODER`. Any other entry is taken as a Vorbis field name, so rippers'
   custom fields can be named directly (`strip_frames: ["REPLAYGAIN_ALBUM_GAIN"]`).
-- A folder may mix MP3 and FLAC; both are tagged with the same album/year/disc values so the
+- A folder may mix MP3, FLAC and Ogg; all are tagged with the same album/year/disc values so the
   server groups them as one album.
-- Everything else in a FLAC (seek table, audio frames, other metadata blocks) is untouched.
+- Everything else in the file is untouched: the FLAC seek table, audio frames and other metadata
+  blocks, the Ogg audio packets and `R128_*` gain tags. (When an Ogg comment header grows, mutagen
+  renumbers the pages after it and recomputes their CRCs; the audio packets themselves do not change.)
+- Ogg Speex, Ogg FLAC and Theora files share the `.ogg` / `.oga` extensions but are not
+  handled: the analysis lists them as unreadable and they are left alone.
+
+## M4A (MP4 atoms)
+
+M4A (AAC and Apple Lossless) stores tags as atoms. The plan stays the same; the tool maps fields
+as follows when it writes:
+
+| Concept | MP3 (ID3) | M4A (MP4 atom) |
+|---|---|---|
+| Album / Title / Artist / Genre | `TALB` / `TIT2` / `TPE1` / `TCON` | `©alb` / `©nam` / `©ART` / `©gen` |
+| Album artist | `TPE2` | `aART` |
+| Year | `TDRC` | `©day` |
+| Track / Disc | `TRCK` / `TPOS` = `n/total` | `trkn` / `disk` = `(number, total)` pair; an unknown total is `0` |
+| Cover | `APIC` | `covr` (one JPEG) |
+
+- `COMM`, `TENC`/`TSSE`, `TCOP` and `TCOM` in `strip_frames` remove `©cmt`, `©too`, `cprt` and
+  `©wrt`. Any other entry is taken as an atom name (case-insensitive), e.g. a free-form
+  `----:com.apple.iTunes:LABEL`.
+- Free-form (`----`) atoms, `tmpo`, `cpil`, `rtng` and the like are neither changed nor lost: they are
+  backed up with their value types and restored exactly.
+- Only `.m4a` is handled. `.mp4` may be video and `.m4b` is an audiobook format, so both are
+  reported as skipped.
 
 ## Year conventions (decide with the user)
 

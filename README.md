@@ -45,8 +45,9 @@ fix the tags in this folder for Navidrome
 Other phrasings that trigger the skill: *"organize these albums for Plex/Jellyfin"*,
 *"add cover art"*, *"fix the multi-disc albums"*, *"clean up my ID3 tags"*.
 
-Works on **MP3** (ID3) and **FLAC** (Vorbis comments) files, also mixed in one folder. Other
-audio formats are left alone and listed as skipped in the analysis.
+Works on **MP3** (ID3), **FLAC** and **Ogg Vorbis / Opus** (Vorbis comments) and **M4A** (AAC /
+Apple Lossless) files, also mixed in one folder. Other audio formats are left alone and listed as
+skipped in the analysis.
 
 Expected input layout (anything roughly like this works — the skill detects multi-disc
 sets from `CD1`/`Disc 2`/`Vol. II` subfolders):
@@ -68,7 +69,7 @@ G:/Music/King Crimson/
 | **Album titles** | Canonical spelling/casing, catalog junk (`[EGCD 51]`, `(2003) [FLAC]`, `(Disc 1)`) removed, editions labelled consistently |
 | **Years** | Release vs. recording year for live/archival albums, real reissue years, typo repair (`1082` → `1982`) |
 | **Track titles** | Canonical titles, double spaces, stray backslashes, title case |
-| **Multi-disc** | One shared album title + proper disc numbers (`TPOS` `1/3`, `2/3`, `3/3`; `DISCNUMBER` + `TOTALDISCS` in FLAC) so servers stop splitting box sets into three albums |
+| **Multi-disc** | One shared album title + proper disc numbers (`TPOS` `1/3`, `2/3`, `3/3`; `DISCNUMBER` + `TOTALDISCS` in FLAC and Ogg; `disk` in M4A) so servers stop splitting box sets into three albums |
 | **Album artist** | Explicit `TPE2` / `ALBUMARTIST` so albums group reliably |
 | **Genre** | Unified across the collection (or left alone — your call) |
 | **Cover art** | Best square front from the Cover Art Archive or your local scans, embedded **and** written as `cover.jpg`, per-disc art distributed to disc folders |
