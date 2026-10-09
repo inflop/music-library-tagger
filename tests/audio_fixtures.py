@@ -148,8 +148,55 @@ def write_opus(path, *, album, title, cover=None, tagged=True):
                cover=cover, tagged=tagged)
 
 
+def _atom(kind, payload=b""):
+    return struct.pack(">I", 8 + len(payload)) + kind + payload
+
+
+M4A_AUDIO = bytes(range(256)) * 5  # the mdat payload
+
+
+def m4a_bytes():
+    """An MP4 audio file mutagen accepts: ftyp, moov (with a chunk offset table), mdat."""
+    ftyp = _atom(b"ftyp", b"M4A " + struct.pack(">I", 0) + b"M4A mp42isom")
+
+    def moov(mdat_offset):
+        mvhd = _atom(b"mvhd", struct.pack(">IIIIIIH", 0, 0, 0, 1000, 5000, 0x10000, 0x100)
+                     + b"\x00" * 10 + struct.pack(">9I", 0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000)
+                     + b"\x00" * 24 + struct.pack(">I", 2))
+        mdhd = _atom(b"mdhd", struct.pack(">IIIIIHH", 0, 0, 0, 44100, 220500, 0x55C4, 0))
+        hdlr = _atom(b"hdlr", struct.pack(">II", 0, 0) + b"soun" + b"\x00" * 12 + b"\x00")
+        sample = (b"\x00" * 6 + struct.pack(">H", 1)            # reserved, data ref index
+                  + struct.pack(">HHIHHHH", 0, 0, 0, 2, 16, 0, 0)  # version.. packet size
+                  + struct.pack(">I", 44100 << 16))
+        stsd = _atom(b"stsd", struct.pack(">II", 0, 1) + _atom(b"mp4a", sample + _atom(b"free")))
+        stco = _atom(b"stco", struct.pack(">III", 0, 1, mdat_offset))
+        stbl = _atom(b"stbl", stsd + stco)
+        trak = _atom(b"trak", _atom(b"mdia", mdhd + hdlr + _atom(b"minf", stbl)))
+        return _atom(b"moov", mvhd + trak)
+
+    mdat_offset = len(ftyp) + len(moov(0)) + 8
+    return ftyp + moov(mdat_offset) + _atom(b"mdat", M4A_AUDIO)
+
+
+def write_m4a(path, *, album, title, cover=None, tagged=True):
+    from mutagen.mp4 import MP4, MP4Cover
+    Path(path).write_bytes(m4a_bytes())
+    if not tagged:
+        return
+    audio = MP4(str(path))
+    audio.add_tags()
+    audio["\xa9alb"] = [album]
+    audio["\xa9nam"] = [title]
+    audio["\xa9ART"] = ARTISTS
+    audio["\xa9wrt"] = ["Robert Fripp"]
+    if cover:
+        audio["covr"] = [MP4Cover(cover, imageformat=MP4Cover.FORMAT_JPEG)]
+    audio.save()
+
+
 # variant id -> (extension, audio payload at the end of the file, writer, backend name)
 FACTORIES = {
+    "m4a": (".m4a", M4A_AUDIO, write_m4a, "m4a"),
     "mp3": (".mp3", MP3_BYTES, write_mp3, "mp3"),
     "flac": (".flac", AUDIO_TAIL, write_flac, "flac"),
     "ogg-vorbis": (".ogg", OGG_AUDIO, write_ogg_vorbis, "ogg"),
