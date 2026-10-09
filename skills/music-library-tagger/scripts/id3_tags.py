@@ -152,6 +152,12 @@ def snapshot(path):
 
 def restore(path, entry, pictures):
     """Rewrite one file from its backup entry and the pictures read for it."""
+    frames = entry.get("frames")
+    if not isinstance(frames, dict):
+        # A missing snapshot is a damaged entry, not "the file had no frames" ({}):
+        # reading it that way would wipe the tags the file has now. Every valid
+        # backup, old layouts included, carries "frames".
+        raise ValueError("the MP3 backup entry has no frame snapshot")
     # Start from what is on disk and replace only what this tool manages: text
     # frames and artwork. Frames it never wrote -- POPM ratings, UFID
     # identifiers, USLT lyrics -- stay untouched instead of being wiped by a
@@ -160,7 +166,7 @@ def restore(path, entry, pictures):
     for key in list(tags.keys()):
         if isinstance(tags[key], TextFrame) or key.split(":")[0] == "APIC":
             del tags[key]
-    for key, vals in (entry.get("frames") or {}).items():
+    for key, vals in frames.items():
         fr = rebuild_frame(key, vals)
         if fr is not None:
             tags.add(fr)

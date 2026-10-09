@@ -244,9 +244,9 @@ def main():
     report.append("\n" + "=" * 100)
     report.append("SUMMARY: %d albums, %d tracks total" % (len(result_albums), total_tracks))
     report.append("FORMATS: %s" % dict(sorted(formats.items())))
-    report.append("TAG FIELDS PRESENT (ID3 frames / Vorbis fields): %s"
+    report.append("TAG FIELDS PRESENT (ID3 frames, Vorbis fields, MP4 atoms): %s"
                   % dict(sorted(all_frames.items(), key=lambda x: -x[1])))
-    report.append("\nDISTINCT COMMENT VALUES (ID3 COMM / Vorbis COMMENT):")
+    report.append("\nDISTINCT COMMENT VALUES (ID3 COMM, Vorbis COMMENT, MP4 ©cmt):")
     for val, folders in sorted(all_comments.items(), key=lambda x: -len(x[1])):
         report.append("  %r  -> %d files, e.g. %s" % (val, len(folders), sorted(set(folders))[:3]))
     if skipped_audio:

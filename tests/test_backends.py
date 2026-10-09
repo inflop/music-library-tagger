@@ -197,8 +197,6 @@ class BackendContract(unittest.TestCase):
         # A backup entry with no tag snapshot must not be read as "the file had no
         # tags", which would wipe the tags the file has now.
         for kind in self.each_kind():
-            if FACTORIES[kind][3] == tagio.LEGACY_FORMAT:
-                continue  # entries from before other formats existed
             plan, paths, _, backup = self.library(kind)
             self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
             self.quiet(apply_plan.apply, plan, False)

@@ -92,6 +92,24 @@ class TestFlacAnalysis(unittest.TestCase):
                                  "error": True})
 
 
+class TestReportHeadings(unittest.TestCase):
+    def test_tag_headings_name_every_supported_tag_family(self):
+        with tempfile.TemporaryDirectory(prefix="mlt-analyze-headings-") as temp:
+            temp = Path(temp)
+            root = temp / "library"
+            (root / "A").mkdir(parents=True)
+            (root / "A" / "01.mp3").write_bytes(MP3_BYTES)
+            completed, _ = run_analyze(root, temp / "out.json")
+            heading = [line for line in completed.stdout.splitlines()
+                       if line.startswith("TAG FIELDS PRESENT")][0]
+            for family in ("ID3", "Vorbis", "MP4"):
+                self.assertIn(family, heading)
+            comments = [line for line in completed.stdout.splitlines()
+                        if line.startswith("DISTINCT COMMENT VALUES")][0]
+            for family in ("ID3", "Vorbis", "MP4"):
+                self.assertIn(family, comments)
+
+
 class TestSkippedAudioReport(unittest.TestCase):
     def test_unsupported_audio_is_reported_not_silently_ignored(self):
         with tempfile.TemporaryDirectory(prefix="mlt-analyze-skip-") as temp:
