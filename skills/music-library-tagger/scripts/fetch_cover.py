@@ -30,10 +30,28 @@ CAA = "https://coverartarchive.org"
 
 ALBUMISH = {"Album", "EP", "Single", "Other", "Broadcast"}
 
+# MusicBrainz asks for about one request per second (and CONTRIBUTING.md makes staying
+# within that a rule). Every request to it goes through _get(), which waits here, so no
+# call path -- the strict and fallback queries, a retry, the release lookup -- can
+# forget to pause. The Cover Art Archive is a different service and is not throttled.
+MB_MIN_INTERVAL = 1.1
+_last_mb_request = None
+
+
+def _wait_for_musicbrainz():
+    global _last_mb_request
+    if _last_mb_request is not None:
+        wait = _last_mb_request + MB_MIN_INTERVAL - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+    _last_mb_request = time.monotonic()
+
 
 def _get(url, accept="application/json", tries=4):
     last = None
     for i in range(tries):
+        if url.startswith(MB):
+            _wait_for_musicbrainz()
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept})
             with urllib.request.urlopen(req, timeout=30) as r:
