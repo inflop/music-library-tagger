@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-09
+
 ### Added
 - `apply_plan.py --albums "Red,Discipline"` and `--limit N` apply (and back up) only part of a plan
   (#6). The documented pilot used to mean trimming `plan.json` by hand right before the first write,
