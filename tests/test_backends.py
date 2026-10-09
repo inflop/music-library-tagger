@@ -36,7 +36,8 @@ class BackendContract(unittest.TestCase):
     def library(self, kind, tagged=True):
         """One album, two tracks of `kind`: (plan, track paths, payload, backup)."""
         ext, payload, writer, _ = FACTORIES[kind]
-        root = os.path.join(self.tmp, kind, "Band")
+        self._libraries = getattr(self, "_libraries", 0) + 1
+        root = os.path.join(self.tmp, "%s-%d" % (kind, self._libraries), "Band")
         disc = os.path.join(root, "1974 - Red")
         os.makedirs(disc)
         os.makedirs(os.path.join(root, ".music-tagger"))
@@ -170,6 +171,32 @@ class BackendContract(unittest.TestCase):
             self.quiet(apply_plan.apply, plan, False)
             self.assertEqual(Path(junk).read_bytes(), b"this is not audio")
             self.assertEqual(self.summary(paths[0])["album"], "Red")
+
+    def test_a_file_of_another_format_is_never_written_under_this_extension(self):
+        # mutagen detects the format from the content, so a FLAC named .mp3 is
+        # "readable" to a naive check and would get an ID3 tag prepended.
+        formats = {}
+        for kind, spec in FACTORIES.items():
+            formats.setdefault(spec[3], kind)
+        for a in formats.values():
+            for b in formats.values():
+                if FACTORIES[a][3] == FACTORIES[b][3]:
+                    continue
+                with self.subTest(named_as=a, really=b):
+                    plan, paths, _, backup = self.library(a)
+                    self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)  # valid
+                    FACTORIES[b][2](paths[1], album="x", title="x", cover=jpeg((1, 2, 3)))
+                    mislabelled = Path(paths[1]).read_bytes()
+
+                    dry = self.output_of(apply_plan.apply, plan, True)
+                    counts = json.loads(dry.split("SUMMARY:", 1)[1].strip())
+                    self.assertEqual((counts["tracks"], counts["unreadable"]), (1, 1))
+
+                    self.quiet(apply_plan.apply, plan, False)
+                    self.assertEqual(Path(paths[1]).read_bytes(), mislabelled)
+                    out = self.output_of(apply_plan.restore, backup)
+                    self.assertEqual(Path(paths[1]).read_bytes(), mislabelled)
+                    self.assertIn("could not restore", out)
 
     def test_dry_run_changes_nothing(self):
         for kind in self.each_kind():

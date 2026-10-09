@@ -27,7 +27,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `apply_plan.py` skips a file its backend cannot read (a Speex stream named `.ogg`, a truncated or
   mislabelled file) in the backup, the dry run and the real run alike: it is reported as `cannot read`,
-  counted as `unreadable` in the summary, never written, and no longer aborts the run.
+  counted as `unreadable` in the summary, never written, and no longer aborts the run. This includes a file whose
+  content is another format than its extension says (a FLAC renamed `.mp3`), which the MP3 backend
+  used to tag by prepending an ID3 header; restore refuses such a file too.
 
 ### Changed
 - Tag formats are now backends behind one interface (#12): `scripts/id3_tags.py` and

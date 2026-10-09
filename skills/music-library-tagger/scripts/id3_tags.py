@@ -25,6 +25,7 @@ tag joins them with "/" -- a property of the format, not of the backup, which
 keeps the values apart.
 """
 from mutagen import File as MFile
+from mutagen.mp3 import MP3
 from mutagen.id3 import (ID3, ID3NoHeaderError, Frames, TextFrame, TALB, TPE1,
                          TPE2, TIT2, TCON, TDRC, TRCK, TPOS, APIC)
 
@@ -51,9 +52,22 @@ def load_id3(path):
         return ID3()
 
 
+def _open_mp3(path):
+    """The mutagen MP3 object for `path`; ValueError if the content is not MP3.
+
+    mutagen detects the format from the content, and ID3.save() would prepend a tag to
+    any file it is handed, so a FLAC, Ogg or M4A file renamed to .mp3 must be refused
+    here, not tagged.
+    """
+    audio = MFile(path)
+    if not isinstance(audio, MP3):
+        raise ValueError("not an MP3 stream: %s" % path)
+    return audio
+
+
 def read_summary(path):
     """Tags of one MP3 file in the shape every backend returns."""
-    tg = MFile(path).tags
+    tg = _open_mp3(path).tags
     fields = []
     comments = []
     n_pictures = 0
@@ -113,6 +127,7 @@ def rebuild_frame(key, vals):
 
 def snapshot(path):
     """Return (payload, pictures): every text frame, and every embedded cover."""
+    _open_mp3(path)
     try:
         tags = ID3(path)
         # Remember the tag version so a restore does not quietly rewrite a v2.4
@@ -152,6 +167,7 @@ def snapshot(path):
 
 def restore(path, entry, pictures):
     """Rewrite one file from its backup entry and the pictures read for it."""
+    _open_mp3(path)
     frames = entry.get("frames")
     if not isinstance(frames, dict):
         # A missing snapshot is a damaged entry, not "the file had no frames" ({}):
@@ -194,6 +210,7 @@ def restore(path, entry, pictures):
 
 def write(path, fields, strip, cover, options):
     """Apply the plan's fields to one file; `cover` is JPEG bytes or None."""
+    _open_mp3(path)
     tags = load_id3(path)
 
     # strip unwanted frames
