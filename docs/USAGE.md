@@ -44,8 +44,13 @@ files currently say. Read it. Change anything you disagree with before approving
 
 ```bash
 python apply_plan.py --plan .music-tagger/plan.json --dry-run   # nothing written
-python apply_plan.py --plan .music-tagger/plan.json             # pilot, then full run
+python apply_plan.py --plan .music-tagger/plan.json --albums "Red,Discipline"   # pilot
+python apply_plan.py --plan .music-tagger/plan.json             # the full run
 ```
+
+`--albums` takes album titles or `album_path` values (case ignored; comma separated or repeated),
+`--limit N` takes the first N albums, and both work with `--dry-run`. The plan file is never
+modified, and a name that is not in the plan is an error that lists the albums it does contain.
 
 A backup lands in `.music-tagger/tags_backup_<timestamp>.json` before the first write.
 

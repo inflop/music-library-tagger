@@ -6,6 +6,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `apply_plan.py --albums "Red,Discipline"` and `--limit N` apply (and back up) only part of a plan
+  (#6). The documented pilot used to mean trimming `plan.json` by hand right before the first write,
+  so the plan that was reviewed was not the plan that ran. The file is never modified; names match an
+  album title or `album_path`, ignoring case; an unknown name is an error that lists the albums in
+  the plan; and the flags are refused with `--restore` instead of being ignored. The filter works with
+  `--dry-run`.
+- A backup no longer overwrites an earlier one: `tags_backup_<timestamp>.json` has one-second
+  resolution, so two runs in the same second (likely with pilots) shared a name and the second erased
+  the first run's way back. A number is appended when the name or its `_art` folder is taken, and
+  the file is created exclusively when the name is chosen, so two simultaneous runs cannot pick the same one.
+
 ### Fixed
 - `apply_plan.py --restore <backup> --dry-run` no longer performs a real restore (#4). `main()` returned
   as soon as it saw `--restore`, so the flag was accepted and ignored. A dry restore now changes

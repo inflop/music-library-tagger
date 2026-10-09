@@ -85,13 +85,13 @@ G:/Music/King Crimson/
    (MusicBrainz, Cover Art Archive, discography info) rather than trusting your tags.
 4. **Plan** — a human-readable `PLAN-TAGI.md` plus a machine-readable `plan.json`.
    **Nothing is written until you approve it.**
-5. **Apply** — dry run, then a 2-album pilot, then the full run.
+5. **Apply** — dry run, then a 2-album pilot (`--albums` / `--limit`, no hand-editing of the plan), then the full run.
 6. **Verify & report** — re-scan and tell you to trigger a server rescan.
 
 ## Safety
 
 - **The audio stream is never touched** — only tags (ID3 / Vorbis comments) and artwork.
-- **Every run backs up all text tags first** to `.music-tagger/tags_backup_<ts>.json`.
+- **Every run backs up the text tags of the files it is about to change first** (all albums in the plan, or only those picked with `--albums` / `--limit`) to `.music-tagger/tags_backup_<ts>.json`; a backup never overwrites an earlier one.
 - **Reversible**: `python apply_plan.py --restore .music-tagger/tags_backup_<ts>.json` (add `--dry-run` to preview it)
 - **Approval gate**: the plan is shown and must be accepted; a dry run and a pilot come first.
 - **Privacy**: no personal data (name, e-mail, username, local paths) is ever written into
