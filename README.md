@@ -85,7 +85,7 @@ G:/Music/King Crimson/
    (MusicBrainz, Cover Art Archive, discography info) rather than trusting your tags.
 4. **Plan** — a human-readable `PLAN-TAGI.md` plus a machine-readable `plan.json`.
    **Nothing is written until you approve it.**
-5. **Apply** — dry run, then a 2-album pilot, then the full run.
+5. **Apply** — dry run, then a 2-album pilot (`--albums` / `--limit`, no hand-editing of the plan), then the full run.
 6. **Verify & report** — re-scan and tell you to trigger a server rescan.
 
 ## Safety

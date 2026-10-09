@@ -120,9 +120,12 @@ clean JPEG (RGB, EXIF stripped) automatically.
 ## Phase 6 — Apply (reversible)
 
 Dry run first: `python "$SKILL/scripts/apply_plan.py" --plan "<ROOT>/.music-tagger/plan.json" --dry-run`
-Then, after approval, run a **pilot** on 1 simple album + 1 box (temporarily trim plan.json or
-keep a small pilot plan), show before/after tags and file layout, and only then apply the full
-plan (the backup is written automatically to `<ROOT>/.music-tagger/tags_backup_*.json`).
+Then, after approval, run a **pilot** on 1 simple album + 1 box with the plan filter, never by
+editing plan.json (the plan that was reviewed must be the plan that runs):
+`… --plan <plan.json> --albums "Red,Discipline"` (titles or `album_path`, case ignored,
+comma separated or repeated) or `--limit 2` for the first two albums. A dry run takes the same
+flags. Show before/after tags and file layout, and only then apply the full plan. Each run writes
+its own backup to `<ROOT>/.music-tagger/tags_backup_*.json`, covering only the albums it touched.
 
 ## Phase 7 — Verify & report
 

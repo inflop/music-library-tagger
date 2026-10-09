@@ -18,7 +18,7 @@ where there are any) or native field names.
 Only tags and artwork are touched -- the audio stream is never re-encoded.
 
 Usage:
-    python apply_plan.py --plan plan.json [--dry-run]
+    python apply_plan.py --plan plan.json [--dry-run] [--albums "Red,Discipline"] [--limit N]
     python apply_plan.py --restore <backup.json> [--dry-run]
 
 plan.json schema (all paths are RELATIVE to "root", forward slashes ok):
@@ -450,16 +450,66 @@ def apply(plan, dry):
     log("\n%s SUMMARY: %s" % ("DRY-RUN" if dry else "APPLIED", json.dumps(changes)))
 
 
+def select_albums(plan, names=None, limit=None):
+    """A plan holding only the chosen albums, or ValueError if the choice is not usable.
+
+    `names` are the values of --albums: each is an album title or album_path (case and
+    surrounding spaces ignored). A value that matches an album as a whole is taken as
+    one name, which keeps a title like "Red, White & Blue" intact; otherwise it is split
+    on commas. `limit` keeps the first N of what is left. Albums stay in plan order.
+    The original plan is not modified.
+    """
+    albums = plan["albums"]
+    if limit is not None and limit < 1:
+        raise ValueError("--limit must be 1 or more, not %d" % limit)
+
+    def hits(token):
+        token = token.strip().lower()
+        return [i for i, alb in enumerate(albums)
+                if token in (alb["album"].lower(), (alb.get("album_path") or "").lower())]
+
+    chosen = albums
+    if names:
+        keep, unknown = set(), []
+        for value in names:
+            tokens = [value] if hits(value) else value.split(",")
+            for token in tokens:
+                if not token.strip():
+                    continue
+                found = hits(token)
+                if found:
+                    keep.update(found)
+                else:
+                    unknown.append(token.strip())
+        if unknown:
+            raise ValueError("no such album in the plan: %s. Albums in the plan: %s"
+                             % (", ".join(unknown), ", ".join(a["album"] for a in albums)))
+        chosen = [alb for i, alb in enumerate(albums) if i in keep]
+    if limit is not None:
+        chosen = chosen[:limit]
+    if len(chosen) == len(albums):
+        return plan
+    return dict(plan, albums=chosen)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--plan")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--restore")
+    ap.add_argument("--albums", action="append", metavar="NAMES",
+                    help="only these albums of the plan (titles or album_path, comma separated; "
+                         "may be repeated): a pilot without editing plan.json")
+    ap.add_argument("--limit", type=int, metavar="N",
+                    help="only the first N albums of the plan (after --albums)")
     ap.add_argument("--backup-dir", default=None,
                     help="where to write the pre-change backup (default: <root>/.music-tagger)")
     args = ap.parse_args()
 
     if args.restore:
+        if args.albums or args.limit is not None:
+            ap.error("--albums and --limit select albums of a plan; with --restore the "
+                     "backup file decides what is restored")
         restore(args.restore, args.dry_run); return
 
     if not args.plan:
@@ -468,6 +518,15 @@ def main():
         plan = json.load(f)
     root = os.path.abspath(plan["root"])
     plan["root"] = root
+
+    total = len(plan["albums"])
+    try:
+        plan = select_albums(plan, args.albums, args.limit)
+    except ValueError as e:
+        ap.error(str(e))
+    if len(plan["albums"]) != total:
+        log("Selected %d of %d albums: %s"
+            % (len(plan["albums"]), total, ", ".join(a["album"] for a in plan["albums"])))
 
     if not args.dry_run:
         bdir = args.backup_dir or os.path.join(root, ".music-tagger")
