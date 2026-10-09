@@ -24,8 +24,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]
 
 import apply_plan  # noqa: E402
 import mp4_tags  # noqa: E402
-from audio_fixtures import (M4A_AUDIO, M4A_CHUNK_STARTS, jpeg, m4a_bytes,  # noqa: E402
-                            m4a_chunk_offsets, write_m4a, write_m4a_co64)
+from audio_fixtures import (M4A_AUDIO, M4A_CHUNK_STARTS, M4A_UNPARSEABLE_ATOM,  # noqa: E402
+                            jpeg, m4a_bytes, m4a_chunk_offsets, write_m4a,
+                            write_m4a_co64)
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm  # noqa: E402
 from PIL import Image  # noqa: E402
 
@@ -171,13 +172,17 @@ class TestRestoreFidelity(M4aLibrary):
         self.assertEqual(after["covr"][0], before["covr"][0])
 
     def test_atoms_the_tool_cannot_represent_are_left_alone(self):
-        path = self.track()
-        audio = MP4(path)
-        audio["----:com.apple.iTunes:EMPTY"] = []
-        audio.save()
-        self.quiet(apply_plan.backup_tags, self.root, self.plan(path), self.backup)
-        self.quiet(apply_plan.apply, self.plan(path), False)
+        path = self.track(ilst_extra=M4A_UNPARSEABLE_ATOM)
+        # The fixture really holds the atom, and mutagen kept it through its own save.
+        self.assertIn(M4A_UNPARSEABLE_ATOM, Path(path).read_bytes())
+        self.assertNotIn("pgap", MP4(path).tags)  # not a tag value: the tool never sees it
+        plan = self.plan(path)
+        self.quiet(apply_plan.backup_tags, self.root, plan, self.backup)
+        self.quiet(apply_plan.apply, plan, False)
+        self.assertIn(M4A_UNPARSEABLE_ATOM, Path(path).read_bytes())
+        self.assertEqual(MP4(path).tags["\xa9alb"], ["Red"])
         self.quiet(apply_plan.restore, self.backup)
+        self.assertIn(M4A_UNPARSEABLE_ATOM, Path(path).read_bytes())
         self.assertEqual(MP4(path).tags["\xa9alb"], ["old"])
 
     def test_png_covers_keep_their_format(self):

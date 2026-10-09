@@ -12,6 +12,10 @@ base64-encoded FLAC Picture structure in a METADATA_BLOCK_PICTURE comment.
   list verbatim, so a restore does not lose it.
 - Legacy COVERART / COVERARTMIME comments (a bare base64 image) are left alone until
   a new cover is written, which removes them so no stale picture remains.
+- Saving changes only the comment header. When that packet changes size, mutagen may
+  spread it over more or fewer Ogg pages and then renumber the pages after it and
+  recompute their CRCs. The audio packets, their granule positions and the stream
+  length are unchanged, which is the guarantee; the bytes of the page headers are not.
 - Only Ogg Vorbis and Opus streams are handled. Speex, Ogg FLAC and Theora files
   share the .ogg/.oga extensions; they raise ValueError and show up as unreadable
   instead of being touched.
@@ -73,7 +77,7 @@ def _split(tags):
 def read_summary(path):
     audio = _open(path)
     _, pictures = _split(audio.tags)
-    legacy = 1 if audio.tags.get("COVERART") else 0
+    legacy = len(audio.tags.get("COVERART") or [])  # a repeatable field: one image each
     summary = vc.summarize(audio.tags, len(pictures) + legacy)
     # The picture comments are covers, not metadata worth listing as fields.
     summary["fields"] = [f for f in summary["fields"] if f != PICTURE_FIELD.upper()]

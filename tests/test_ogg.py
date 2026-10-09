@@ -24,10 +24,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]
 
 import apply_plan  # noqa: E402
 import ogg_tags  # noqa: E402
-from audio_fixtures import (OGG_AUDIO, jpeg, ogg_page, write_ogg_vorbis,  # noqa: E402
-                            write_opus)
+from audio_fixtures import (OGG_AUDIO, jpeg, ogg_page, ogg_pages,  # noqa: E402
+                            write_ogg_vorbis, write_opus)
 from mutagen import File as MFile  # noqa: E402
 from mutagen.flac import Picture  # noqa: E402
+from PIL import Image  # noqa: E402
 
 ANALYZE = (Path(__file__).resolve().parents[1]
            / "skills" / "music-library-tagger" / "scripts" / "analyze.py")
@@ -98,6 +99,35 @@ class TestOggCover(OggLibrary):
         self.assertNotIn("COVERART", tags)
         self.assertNotIn("COVERARTMIME", tags)
         self.assertEqual(ogg_tags.read_summary(path)["n_pictures"], 1)
+
+    def test_every_legacy_coverart_value_is_counted(self):
+        path = self.track(".ogg")
+        audio = MFile(path)
+        audio["COVERART"] = [base64.b64encode(jpeg((1, 2, 3))).decode("ascii"),
+                             base64.b64encode(jpeg((4, 5, 6))).decode("ascii")]
+        audio.save()
+        self.assertEqual(ogg_tags.read_summary(path)["n_pictures"], 3)  # 1 + 2 legacy
+
+    def test_a_cover_too_big_for_one_page_keeps_the_audio_packets(self):
+        # mutagen may spread a larger comment packet over more pages and then renumber
+        # the following ones (recomputing their CRCs). What must not change is the
+        # audio itself: its packet, its granule position and the stream length.
+        noise = Image.frombytes("RGB", (400, 400), os.urandom(400 * 400 * 3))
+        big = io.BytesIO()
+        noise.save(big, "JPEG", quality=95)
+        Path(self.disc, "new.jpg").write_bytes(big.getvalue())
+        for ext in WRITERS:
+            with self.subTest(ext=ext):
+                path = self.track(ext, name="big")
+                before = ogg_pages(Path(path).read_bytes())
+                length = MFile(path).info.length
+                self.quiet(apply_plan.apply, self.plan(path), False)
+                after = ogg_pages(Path(path).read_bytes())
+                self.assertGreater(len(after), len(before))      # it did spill over
+                self.assertEqual([p[2] for p in after], list(range(len(after))))
+                self.assertEqual(after[-1][1:2] + (after[-1][3],), before[-1][1:2] + (before[-1][3],))
+                self.assertEqual(after[-1][3], OGG_AUDIO)
+                self.assertEqual(MFile(path).info.length, length)
 
     def test_picture_comments_are_not_listed_as_tag_fields(self):
         path = self.track(".opus")

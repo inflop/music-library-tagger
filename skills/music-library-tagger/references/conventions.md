@@ -56,8 +56,9 @@ fields as follows when it writes:
   custom fields can be named directly (`strip_frames: ["REPLAYGAIN_ALBUM_GAIN"]`).
 - A folder may mix MP3, FLAC and Ogg; all are tagged with the same album/year/disc values so the
   server groups them as one album.
-- Everything else in the file (FLAC seek table, audio frames, other metadata blocks; Ogg audio pages,
-  `R128_*` gain tags) is untouched.
+- Everything else in the file is untouched: the FLAC seek table, audio frames and other metadata
+  blocks, the Ogg audio packets and `R128_*` gain tags. (When an Ogg comment header grows, mutagen
+  renumbers the pages after it and recomputes their CRCs; the audio packets themselves do not change.)
 - Ogg Speex, Ogg FLAC and Theora files share the `.ogg` / `.oga` extensions but are not
   handled: the analysis lists them as unreadable and they are left alone.
 

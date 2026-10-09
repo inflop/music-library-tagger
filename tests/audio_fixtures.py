@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """Tiny synthetic audio files shared by the tests (no real encoder needed).
 
-FACTORIES maps a backend name to (extension, audio payload, writer). The contract
-tests in test_backends.py run against every entry, so a new format is covered by
-adding one writer here.
+FACTORIES maps a fixture variant id ("flac", "ogg-vorbis", "m4a-co64", ...) to
+(extension, audio payload, writer, backend name); several variants may share one
+backend. The contract tests in test_backends.py run against every entry, and
+check that every registered backend has at least one, so a new format is covered by
+adding a writer and an entry here.
 """
 import io
 import struct
@@ -101,6 +103,21 @@ def ogg_page(packets, *, seq, granule, flags=0, serial=0x1234):
 OGG_AUDIO = bytes(range(256)) * 3  # one fake audio packet
 
 
+def ogg_pages(data):
+    """[(header_type, granule, sequence, body), ...] for the pages of an Ogg file."""
+    pages, at = [], 0
+    while at < len(data):
+        assert data[at:at + 4] == b"OggS", "not an Ogg page at %d" % at
+        flags = data[at + 5]
+        granule, _serial, seq = struct.unpack("<qII", data[at + 6:at + 22])
+        count = data[at + 26]
+        body_len = sum(data[at + 27:at + 27 + count])
+        start = at + 27 + count
+        pages.append((flags, granule, seq, data[start:start + body_len]))
+        at = start + body_len
+    return pages
+
+
 def ogg_vorbis_bytes():
     ident = (b"\x01vorbis" + struct.pack("<IBIiii", 0, 2, 44100, 0, 128000, 0)
              + b"\xb8\x01")
@@ -159,7 +176,12 @@ M4A_AUDIO = bytes(range(256)) * 5  # the mdat payload
 M4A_CHUNK_STARTS = (0, 400, 900)
 
 
-def m4a_bytes(table="stco"):
+# A pgap (boolean) atom whose 3-byte payload is not a valid boolean: mutagen cannot parse it,
+# keeps the raw atom and writes it back on every save.
+M4A_UNPARSEABLE_ATOM = _atom(b"pgap", _atom(b"data", struct.pack(">II", 21, 0) + b"\x01\x02\x03"))
+
+
+def m4a_bytes(table="stco", ilst_extra=b""):
     """An MP4 audio file mutagen accepts: ftyp, moov (with a chunk offset table), mdat.
 
     `table` picks the offset atom: "stco" (32 bit) or "co64" (64 bit).
@@ -185,7 +207,12 @@ def m4a_bytes(table="stco"):
                             + b"".join(struct.pack(">I", o) for o in starts))
         stbl = _atom(b"stbl", stsd + offsets)
         trak = _atom(b"trak", _atom(b"mdia", mdhd + hdlr + _atom(b"minf", stbl)))
-        return _atom(b"moov", mvhd + trak)
+        udta = b""
+        if ilst_extra:
+            hdlr_meta = _atom(b"hdlr", struct.pack(">II", 0, 0) + b"mdir" + b"appl" + b"\x00" * 9)
+            udta = _atom(b"udta", _atom(b"meta", struct.pack(">I", 0) + hdlr_meta
+                                        + _atom(b"ilst", ilst_extra)))
+        return _atom(b"moov", mvhd + trak + udta)
 
     mdat_data = len(ftyp) + len(moov(0)) + 8
     return ftyp + moov(mdat_data) + _atom(b"mdat", M4A_AUDIO)
@@ -202,13 +229,14 @@ def m4a_chunk_offsets(data):
     raise AssertionError("no chunk offset table found")
 
 
-def write_m4a(path, *, album, title, cover=None, tagged=True, table="stco"):
+def write_m4a(path, *, album, title, cover=None, tagged=True, table="stco", ilst_extra=b""):
     from mutagen.mp4 import MP4, MP4Cover
-    Path(path).write_bytes(m4a_bytes(table))
+    Path(path).write_bytes(m4a_bytes(table, ilst_extra))
     if not tagged:
         return
     audio = MP4(str(path))
-    audio.add_tags()
+    if audio.tags is None:
+        audio.add_tags()
     audio["\xa9alb"] = [album]
     audio["\xa9nam"] = [title]
     audio["\xa9ART"] = ARTISTS
