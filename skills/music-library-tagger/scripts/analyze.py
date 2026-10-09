@@ -93,15 +93,32 @@ def img_dims(path):
         return None
 
 
+def _folder_identity(path):
+    """Something equal for two names of the same folder.
+
+    The device and inode say whether two spellings (covers / Covers on NTFS or on a default
+    macOS volume) or a symlink reach the same folder. The text of the path cannot say so:
+    posixpath.normcase leaves case alone and realpath does not canonicalise the spelling of
+    existing components. If the filesystem reports no inode numbers, fall back to the path.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        st = None
+    if st is not None and st.st_ino:
+        return ("inode", st.st_dev, st.st_ino)
+    return ("path", os.path.normcase(os.path.realpath(path)))
+
+
 def cover_dirs(folder):
-    """Folders that may hold artwork for a disc/album folder (deduped by real path;
-    filesystems like NTFS are case-insensitive so 'covers'/'Covers' are the same dir)."""
+    """Folders that may hold artwork for a disc/album folder, each folder once even when
+    several candidate names (covers/Covers, a symlink) lead to it."""
     dirs = []
     seen = set()
     for cand in (".", "covers", "Covers", "COVERS", "Scans", "scans", "Cover", "cover", "Artwork", "artwork"):
         p = folder if cand == "." else os.path.join(folder, cand)
         if os.path.isdir(p):
-            key = os.path.normcase(os.path.realpath(p))
+            key = _folder_identity(p)
             if key not in seen:
                 seen.add(key)
                 dirs.append(p)

@@ -271,6 +271,27 @@ class TestCoverDirs(unittest.TestCase):
         covers = [d for d in found if Path(d).name.lower() == "covers"]
         self.assertEqual(len(covers), 1, found)
 
+    def test_aliases_are_found_when_path_normalisation_does_not_fold_case(self):
+        # macOS keeps a case-insensitive volume by default, but posixpath.normcase leaves
+        # case alone and realpath does not canonicalise the spelling of existing
+        # components, so a key built from the path text sees covers / Covers / COVERS as
+        # three folders. Emulate that on any case-insensitive filesystem (NTFS, macOS).
+        (self.folder / "covers").mkdir()
+        if not (self.folder / "COVERS").is_dir():
+            self.skipTest("needs a case-insensitive filesystem; the symlink test covers the rest")
+        with mock.patch.object(analyze.os.path, "normcase", lambda path: path),                 mock.patch.object(analyze.os.path, "realpath", lambda path, *a, **k: path):
+            found = analyze.cover_dirs(str(self.folder))
+        self.assertEqual(len(found), 2, found)           # the folder itself and covers, once
+
+    def test_a_symlink_to_a_covers_folder_is_listed_once(self):
+        (self.folder / "covers").mkdir()
+        try:
+            os.symlink(self.folder / "covers", self.folder / "Artwork", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("this platform does not allow creating symlinks")
+        names = self.names()
+        self.assertEqual(len(names), 2, names)
+
     def test_other_artwork_folder_names_are_recognised(self):
         for name in ("Scans", "scans", "Artwork", "artwork", "Cover", "cover"):
             with self.subTest(name=name):
