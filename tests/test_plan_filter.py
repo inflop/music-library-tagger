@@ -6,6 +6,8 @@ first write to someone's library, so the plan that was reviewed was not the plan
 
 Run with:  python -m unittest discover -s tests -v
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -14,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]
@@ -126,6 +129,20 @@ class TestSelectAlbums(unittest.TestCase):
         self.assertIn("Lizard", message)
         self.assertIn("Discipline", message)   # the choices
 
+    def test_an_empty_selection_is_an_error_not_a_no_op(self):
+        # An empty shell variable (--albums "$PILOT") must not turn "apply these albums"
+        # into a successful run that applies none.
+        for value in ("", "   ", ",", " , ,"):
+            with self.subTest(value=value), self.assertRaises(ValueError) as caught:
+                apply_plan.select_albums(self.plan, [value], None)
+            self.assertIn("names no album", str(caught.exception))
+
+    def test_a_filter_that_leaves_nothing_is_an_error(self):
+        empty = {"root": "x", "options": {}, "albums": []}
+        with self.assertRaises(ValueError):
+            apply_plan.select_albums(empty, None, 1)
+        self.assertEqual(apply_plan.select_albums(empty, None, None), empty)   # no filter: as before
+
     def test_a_limit_below_one_is_an_error(self):
         for bad in (0, -1):
             with self.subTest(limit=bad), self.assertRaises(ValueError):
@@ -166,6 +183,13 @@ class TestCommandLine(Library):
         self.assertEqual(self.tagged(), [])
         self.assertIsNone(self.backed_up())
 
+    def test_an_empty_albums_value_changes_nothing(self):
+        done = self.run_script("--albums", "")
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("names no album", done.stderr)
+        self.assertEqual(self.tagged(), [])
+        self.assertIsNone(self.backed_up())
+
     def test_a_bad_limit_changes_nothing(self):
         done = self.run_script("--limit", "0")
         self.assertEqual(done.returncode, 2)
@@ -181,6 +205,37 @@ class TestCommandLine(Library):
                 self.assertEqual(done.returncode, 2)
                 self.assertIn("--restore", done.stderr)
         self.assertEqual(self.tagged(), ["1974 - Red"])          # nothing was restored
+
+
+class TestBackupNames(Library):
+    def test_a_new_backup_never_reuses_an_existing_name(self):
+        self.backups.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(apply_plan.time, "strftime", return_value="20260101_000000"):
+            first = apply_plan.new_backup_path(str(self.backups))
+            Path(first).write_text("{}", encoding="utf-8")
+            second = apply_plan.new_backup_path(str(self.backups))
+            Path(second).write_text("{}", encoding="utf-8")
+            (self.backups / "tags_backup_20260101_000000_3_art").mkdir()   # a leftover art folder
+            third = apply_plan.new_backup_path(str(self.backups))
+        self.assertEqual(len({first, second, third}), 3)
+        self.assertTrue(first.endswith("tags_backup_20260101_000000.json"))
+
+    def test_two_pilots_in_the_same_second_keep_both_backups(self):
+        # Pilots make several runs in quick succession likely. A shared name would let the
+        # second overwrite the first backup, and with it the way back from the first run.
+        def run(*args):
+            argv = ["apply_plan.py", "--plan", str(self.plan_path), *args]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(apply_plan.time, "strftime", return_value="20260101_000000"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                apply_plan.main()
+
+        run("--albums", "Red")
+        run("--albums", "Beat")
+        backups = sorted(self.backups.glob("tags_backup_*.json"))
+        self.assertEqual(len(backups), 2)
+        contents = [sorted(json.loads(b.read_text(encoding="utf-8"))["files"]) for b in backups]
+        self.assertEqual(sorted(contents), [["1974 - Red/01.mp3"], ["1982 - Beat/01.mp3"]])
 
 
 if __name__ == "__main__":

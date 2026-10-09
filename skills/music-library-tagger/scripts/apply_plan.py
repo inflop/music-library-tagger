@@ -484,12 +484,34 @@ def select_albums(plan, names=None, limit=None):
         if unknown:
             raise ValueError("no such album in the plan: %s. Albums in the plan: %s"
                              % (", ".join(unknown), ", ".join(a["album"] for a in albums)))
+        if not keep:
+            # Only blanks or commas: an empty shell variable must not turn "apply these
+            # albums" into a run that quietly applies none.
+            raise ValueError("--albums names no album")
         chosen = [alb for i, alb in enumerate(albums) if i in keep]
     if limit is not None:
         chosen = chosen[:limit]
+    if (names or limit is not None) and not chosen:
+        raise ValueError("the plan has no albums to select")
     if len(chosen) == len(albums):
         return plan
     return dict(plan, albums=chosen)
+
+
+def new_backup_path(bdir):
+    """tags_backup_<timestamp>.json in `bdir`, numbered if that name (or its _art folder) is taken.
+
+    The timestamp has one-second resolution, and pilots make several runs in quick
+    succession. A shared name would let the second run overwrite the first backup, and
+    with it the way back from the first run.
+    """
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(bdir, "tags_backup_%s.json" % stamp)
+    n = 1
+    while os.path.exists(path) or os.path.exists(os.path.splitext(path)[0] + "_art"):
+        n += 1
+        path = os.path.join(bdir, "tags_backup_%s_%d.json" % (stamp, n))
+    return path
 
 
 def main():
@@ -531,7 +553,7 @@ def main():
     if not args.dry_run:
         bdir = args.backup_dir or os.path.join(root, ".music-tagger")
         os.makedirs(bdir, exist_ok=True)
-        bpath = os.path.join(bdir, "tags_backup_%s.json" % time.strftime("%Y%m%d_%H%M%S"))
+        bpath = new_backup_path(bdir)
         backup_tags(root, plan, bpath)
 
     apply(plan, args.dry_run)
