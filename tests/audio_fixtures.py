@@ -71,7 +71,87 @@ def write_flac(path, *, album, title, cover=None, tagged=True):
     audio.save()
 
 
+def _ogg_crc_table():
+    table = []
+    for i in range(256):
+        r = i << 24
+        for _ in range(8):
+            r = ((r << 1) ^ 0x04C11DB7) if r & 0x80000000 else (r << 1)
+        table.append(r & 0xFFFFFFFF)
+    return table
+
+
+_OGG_CRC = _ogg_crc_table()
+
+
+def ogg_page(packets, *, seq, granule, flags=0, serial=0x1234):
+    """One Ogg page holding whole packets (each shorter than 255 * 255 bytes)."""
+    lacing = bytearray()
+    for packet in packets:
+        lacing += b"\xff" * (len(packet) // 255) + bytes([len(packet) % 255])
+    header = (b"OggS" + bytes([0, flags]) + struct.pack("<qII", granule, serial, seq)
+              + b"\x00\x00\x00\x00" + bytes([len(lacing)]) + bytes(lacing))
+    page = header + b"".join(packets)
+    crc = 0
+    for byte in page:
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ _OGG_CRC[((crc >> 24) & 0xFF) ^ byte]
+    return page[:22] + struct.pack("<I", crc) + page[26:]
+
+
+OGG_AUDIO = bytes(range(256)) * 3  # one fake audio packet
+
+
+def ogg_vorbis_bytes():
+    ident = (b"\x01vorbis" + struct.pack("<IBIiii", 0, 2, 44100, 0, 128000, 0)
+             + b"\xb8\x01")
+    comment = b"\x03vorbis" + struct.pack("<I", 4) + b"test" + struct.pack("<I", 0) + b"\x01"
+    setup = b"\x05vorbis" + b"\x00" * 20
+    return (ogg_page([ident], seq=0, granule=0, flags=2)
+            + ogg_page([comment, setup], seq=1, granule=0)
+            + ogg_page([OGG_AUDIO], seq=2, granule=44100, flags=4))
+
+
+def opus_bytes():
+    head = b"OpusHead" + bytes([1, 2]) + struct.pack("<HIhB", 312, 48000, 0, 0)
+    tags = b"OpusTags" + struct.pack("<I", 4) + b"test" + struct.pack("<I", 0)
+    return (ogg_page([head], seq=0, granule=0, flags=2)
+            + ogg_page([tags], seq=1, granule=0)
+            + ogg_page([OGG_AUDIO], seq=2, granule=48312, flags=4))
+
+
+def _write_ogg(path, raw, mutagen_cls, *, album, title, cover, tagged):
+    import base64
+    Path(path).write_bytes(raw)
+    if not tagged:
+        return
+    audio = mutagen_cls(str(path))
+    audio["ALBUM"] = [album]
+    audio["TITLE"] = [title]
+    audio["ARTIST"] = ARTISTS
+    audio["COMPOSER"] = ["Robert Fripp"]
+    if cover:
+        pic = Picture()
+        pic.type, pic.mime, pic.desc, pic.data = 3, "image/jpeg", "Front", cover
+        audio["METADATA_BLOCK_PICTURE"] = [base64.b64encode(pic.write()).decode("ascii")]
+    audio.save()
+
+
+def write_ogg_vorbis(path, *, album, title, cover=None, tagged=True):
+    from mutagen.oggvorbis import OggVorbis
+    _write_ogg(path, ogg_vorbis_bytes(), OggVorbis, album=album, title=title,
+               cover=cover, tagged=tagged)
+
+
+def write_opus(path, *, album, title, cover=None, tagged=True):
+    from mutagen.oggopus import OggOpus
+    _write_ogg(path, opus_bytes(), OggOpus, album=album, title=title,
+               cover=cover, tagged=tagged)
+
+
+# variant id -> (extension, audio payload at the end of the file, writer, backend name)
 FACTORIES = {
-    "mp3": (".mp3", MP3_BYTES, write_mp3),
-    "flac": (".flac", AUDIO_TAIL, write_flac),
+    "mp3": (".mp3", MP3_BYTES, write_mp3, "mp3"),
+    "flac": (".flac", AUDIO_TAIL, write_flac, "flac"),
+    "ogg-vorbis": (".ogg", OGG_AUDIO, write_ogg_vorbis, "ogg"),
+    "ogg-opus": (".opus", OGG_AUDIO, write_opus, "ogg"),
 }

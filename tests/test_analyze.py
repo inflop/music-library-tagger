@@ -100,9 +100,9 @@ class TestSkippedAudioReport(unittest.TestCase):
             (root / "A").mkdir(parents=True)
             (root / "B").mkdir()
             (root / "A" / "01.mp3").write_bytes(MP3_BYTES)
-            (root / "A" / "02.m4a").write_bytes(b"x")
-            (root / "B" / "01.M4A").write_bytes(b"x")
-            (root / "B" / "02.opus").write_bytes(b"x")
+            (root / "A" / "02.wv").write_bytes(b"x")
+            (root / "B" / "01.WV").write_bytes(b"x")
+            (root / "B" / "02.ape").write_bytes(b"x")
             (root / "B" / "notes.txt").write_bytes(b"x")
 
             completed, result = run_analyze(root, temp / "out.json")
@@ -110,12 +110,12 @@ class TestSkippedAudioReport(unittest.TestCase):
 
             self.assertEqual(result["n_albums"], 1)  # B has no supported audio
             skipped = result["skipped_audio"]
-            self.assertEqual(sorted(skipped), [".m4a", ".opus"])
-            self.assertEqual(skipped[".m4a"]["count"], 2)
-            self.assertEqual(skipped[".m4a"]["folders"], ["A", "B"])
-            self.assertEqual(skipped[".opus"]["count"], 1)
+            self.assertEqual(sorted(skipped), [".ape", ".wv"])
+            self.assertEqual(skipped[".wv"]["count"], 2)
+            self.assertEqual(skipped[".wv"]["folders"], ["A", "B"])
+            self.assertEqual(skipped[".ape"]["count"], 1)
             self.assertIn("SKIPPED", completed.stdout)
-            self.assertIn(".m4a", completed.stdout)
+            self.assertIn(".wv", completed.stdout)
 
     def test_nothing_is_reported_when_nothing_was_skipped(self):
         with tempfile.TemporaryDirectory(prefix="mlt-analyze-skip-") as temp:
