@@ -19,6 +19,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the file is created exclusively when the name is chosen, so two simultaneous runs cannot pick the same one.
 
 ### Fixed
+- `analyze.py` lists an artwork folder once even when several of its candidate names lead to it (#3).
+  `covers` / `Covers` / `COVERS` were de-duplicated by the text of their path, which only works where
+  `normcase` or `realpath` fold case (Windows); on a default macOS volume, which is case-insensitive,
+  one folder was listed, and its images counted, up to three times. Folders are now compared by
+  device and inode, which also handles symlinks.
 - `apply_plan.py --restore <backup> --dry-run` no longer performs a real restore (#4). `main()` returned
   as soon as it saw `--restore`, so the flag was accepted and ignored. A dry restore now changes
   nothing and reports how many files would be restored, how many artwork images reinstated and
