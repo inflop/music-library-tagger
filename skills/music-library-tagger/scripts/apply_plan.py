@@ -57,7 +57,7 @@ plan.json schema (all paths are RELATIVE to "root", forward slashes ok):
   ]
 }
 """
-import os, sys, io, json, time, argparse, shutil, hashlib, tempfile
+import os, sys, io, json, time, argparse, shutil, hashlib, stat, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -258,7 +258,8 @@ def restore(backup_path, dry=False):
 
     A dry run restores onto a temporary copy of each file, so it exercises exactly the
     checks a real restore does (entry shape, artwork, the file's real format) and reports
-    entries that would fail, while the original is never opened for writing.
+    entries that would fail. The original is never modified: it is opened for update
+    (r+b) with nothing written, only to learn whether the real restore could replace it.
     """
     with open(backup_path, encoding="utf-8") as f:
         data = json.load(f)
@@ -312,6 +313,10 @@ def restore(backup_path, dry=False):
                 with tempfile.TemporaryDirectory(prefix="mlt-restore-") as tmp:
                     probe = os.path.join(tmp, os.path.basename(fpath))
                     shutil.copy2(fpath, probe)
+                    # The real file passed the update check above; the copy is this
+                    # process's own, and copy2 carried the source's permission bits
+                    # over (a group-writable file, say, is read-only for its new owner).
+                    os.chmod(probe, stat.S_IREAD | stat.S_IWRITE)
                     backend.restore(probe, info, pictures)
             else:
                 backend.restore(fpath, info, pictures)

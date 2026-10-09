@@ -293,6 +293,27 @@ class BackendContract(unittest.TestCase):
             self.assertIn("1 file(s) could not be restored", real)   # the preview was right
             self.assertEqual(Path(paths[0]).read_bytes(), before)
 
+    def test_a_dry_run_is_not_failed_by_the_permissions_of_its_own_copy(self):
+        # A file owned by someone else and writable through its group bits (0460) is
+        # writable for the real restore. Its copy belongs to this process, so the copied
+        # owner bits (read-only) would stop the probe: a false "would not be restored".
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            real_copy2 = shutil.copy2
+
+            def copy_with_unwritable_owner_bits(src, dst, *args, **kwargs):
+                out = real_copy2(src, dst, *args, **kwargs)
+                os.chmod(dst, stat.S_IREAD)
+                return out
+
+            with mock.patch.object(apply_plan.shutil, "copy2", copy_with_unwritable_owner_bits):
+                dry = self.output_of(apply_plan.restore, backup, True)
+
+            self.assertIn("would restore tags on 2 files,", dry)
+            self.assertNotIn("would not be restored", dry)
+
     def test_every_entry_a_restore_skips_is_reported_and_counted(self):
         # Refused paths, unsupported targets and missing files used to be skipped
         # without being counted (and a missing file without a word), so the summary
