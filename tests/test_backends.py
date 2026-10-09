@@ -254,8 +254,23 @@ class BackendContract(unittest.TestCase):
             out = self.output_of(apply_plan.restore, backup, True)
 
             self.assertIn("could not restore", out)
-            self.assertIn("would restore tags on 1 files", out)
+            self.assertIn("would restore tags on 1 file,", out)
+            self.assertIn("1 artwork image would be reinstated", out)
             self.assertEqual([Path(p).read_bytes() for p in paths], applied)
+
+    def test_the_restore_summary_uses_the_singular_for_one(self):
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            plan["albums"][0]["discs"][0]["tracks"].pop()      # a one-track album
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            dry = self.output_of(apply_plan.restore, backup, True)
+            real = self.output_of(apply_plan.restore, backup)
+            self.assertIn("would restore tags on 1 file, 1 artwork image would be reinstated", dry)
+            self.assertIn("Restored tags on 1 file, 1 artwork image reinstated", real)
+            for text in (dry, real):
+                self.assertNotIn("1 files", text)
+                self.assertNotIn("1 artwork images", text)
 
     def test_the_command_line_honours_dry_run_with_restore(self):
         # The bug was in main(): --restore returned before --dry-run was looked at.

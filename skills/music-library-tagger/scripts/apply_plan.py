@@ -106,6 +106,11 @@ def within(base, rel):
     return target
 
 
+def count(n, noun):
+    """'1 file', '2 files': the noun agrees with the number."""
+    return "%d %s%s" % (n, noun, "" if n == 1 else "s")
+
+
 def unreadable_reason(backend, path):
     """None if the backend can open the file, else why it cannot.
 
@@ -310,11 +315,11 @@ def restore(backup_path, dry=False):
             continue
         n += 1
     if dry:
-        log("DRY-RUN: would restore tags on %d files, %d artwork images would be reinstated "
-            "(nothing was changed)." % (n, n_art))
+        log("DRY-RUN: would restore tags on %s, %s would be reinstated "
+            "(nothing was changed)." % (count(n, "file"), count(n_art, "artwork image")))
     else:
-        log("Restored tags on %d files, %d artwork images reinstated "
-            "(moved image files NOT reverted)." % (n, n_art))
+        log("Restored tags on %s, %s reinstated "
+            "(moved image files NOT reverted)." % (count(n, "file"), count(n_art, "artwork image")))
     if legacy:
         log("  !! %d file(s) came from an old backup that stored no artwork -- "
             "their original embedded covers could not be restored." % legacy)
