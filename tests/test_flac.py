@@ -8,34 +8,20 @@ import io
 import json
 import os
 import shutil
-import struct
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]
                        / "skills" / "music-library-tagger" / "scripts"))
 
 import apply_plan  # noqa: E402
+from audio_fixtures import AUDIO_TAIL, MP3_BYTES, flac_bytes  # noqa: E402
 from mutagen.flac import FLAC, Picture  # noqa: E402
 from mutagen.id3 import ID3, TALB  # noqa: E402
 from PIL import Image  # noqa: E402
-
-AUDIO_TAIL = bytes(range(256)) * 4  # stands in for the encoded frames
-MP3_BYTES = (b"\xff\xfb\x90\x64" + b"\x00" * 413) * 20
-
-
-def flac_bytes():
-    """A FLAC stream mutagen accepts: marker + STREAMINFO + fake audio."""
-    # min/max block size, min/max frame size (24 bit each)
-    streaminfo = struct.pack(">HH", 4096, 4096) + b"\x00" * 6
-    # 20 bit sample rate, 3 bit channels-1, 5 bit bps-1, 36 bit total samples
-    packed = (44100 << 44) | (1 << 41) | (15 << 36) | 44100
-    streaminfo += packed.to_bytes(8, "big") + b"\x00" * 16  # + MD5
-    header = bytes([0x80]) + len(streaminfo).to_bytes(3, "big")  # last block
-    return b"fLaC" + header + streaminfo + AUDIO_TAIL
-
 
 def jpeg(color, size=(600, 600)):
     buf = io.BytesIO()

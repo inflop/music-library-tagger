@@ -63,6 +63,8 @@ plan.json schema (all paths are RELATIVE to "root", forward slashes ok):
 """
 import os, sys, io, json, time, argparse, shutil, hashlib
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from mutagen.mp3 import MP3
 from mutagen.id3 import (ID3, ID3NoHeaderError, Frames, TextFrame, TALB, TPE1,
                          TPE2, TIT2, TCON, TDRC, TRCK, TPOS, APIC)
