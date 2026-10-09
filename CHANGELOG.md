@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-09
+
 ### Added
 - FLAC support (#9). `analyze.py` reads FLAC Vorbis comments and embedded pictures next to
   MP3/ID3, and `apply_plan.py` writes, backs up and restores them. A folder may mix both
