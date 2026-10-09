@@ -31,8 +31,9 @@ import os
 import id3_tags
 import flac_tags
 import ogg_tags
+import mp4_tags
 
-BACKENDS = (id3_tags, flac_tags, ogg_tags)
+BACKENDS = (id3_tags, flac_tags, ogg_tags, mp4_tags)
 
 # Backups written before other formats existed have no "format" on their entries;
 # that has always meant MP3/ID3. New entries omit it for this backend too.
@@ -43,7 +44,7 @@ AUDIO_EXT = tuple(ext for b in BACKENDS for ext in b.EXTENSIONS)
 # Audio this tool cannot tag. It is never read or touched, only reported.
 _KNOWN_AUDIO_EXT = (".m4a", ".mp4", ".aac", ".ogg", ".oga", ".opus", ".wav",
                     ".wv", ".ape", ".wma", ".aiff", ".aif", ".dsf", ".dff",
-                    ".mpc")
+                    ".mpc", ".m4b")
 SKIPPED_AUDIO_EXT = tuple(e for e in _KNOWN_AUDIO_EXT if e not in AUDIO_EXT)
 
 

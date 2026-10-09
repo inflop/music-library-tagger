@@ -20,6 +20,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `METADATA_BLOCK_PICTURE` comment; the backup keeps the image in its sidecar folder, not in the
   JSON. Speex, Ogg FLAC and Theora streams are left alone and shown as unreadable.
 
+- M4A support (#14): AAC and Apple Lossless `.m4a` files are read, tagged, backed up and restored
+  through MP4 atoms (`©alb`, `aART`, `trkn`/`disk` pairs, `covr`). Free-form atoms, integers and
+  booleans are backed up with their value types and restored exactly; the audio data is unchanged and
+  the chunk offsets (`stco` and `co64`) are rewritten to keep pointing at it. `.mp4` and `.m4b` stay reported as skipped.
+
 ### Changed
 - Tag formats are now backends behind one interface (#12): `scripts/id3_tags.py` and
   `scripts/flac_tags.py`, registered in `scripts/tagio.py`. `apply_plan.py` and `analyze.py` no

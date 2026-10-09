@@ -61,6 +61,27 @@ fields as follows when it writes:
 - Ogg Speex, Ogg FLAC and Theora files share the `.ogg` / `.oga` extensions but are not
   handled: the analysis lists them as unreadable and they are left alone.
 
+## M4A (MP4 atoms)
+
+M4A (AAC and Apple Lossless) stores tags as atoms. The plan stays the same; the tool maps fields
+as follows when it writes:
+
+| Concept | MP3 (ID3) | M4A (MP4 atom) |
+|---|---|---|
+| Album / Title / Artist / Genre | `TALB` / `TIT2` / `TPE1` / `TCON` | `©alb` / `©nam` / `©ART` / `©gen` |
+| Album artist | `TPE2` | `aART` |
+| Year | `TDRC` | `©day` |
+| Track / Disc | `TRCK` / `TPOS` = `n/total` | `trkn` / `disk` = `(number, total)` pair; an unknown total is `0` |
+| Cover | `APIC` | `covr` (one JPEG) |
+
+- `COMM`, `TENC`/`TSSE`, `TCOP` and `TCOM` in `strip_frames` remove `©cmt`, `©too`, `cprt` and
+  `©wrt`. Any other entry is taken as an atom name (case-insensitive), e.g. a free-form
+  `----:com.apple.iTunes:LABEL`.
+- Free-form (`----`) atoms, `tmpo`, `cpil`, `rtng` and the like are neither changed nor lost: they are
+  backed up with their value types and restored exactly.
+- Only `.m4a` is handled. `.mp4` may be video and `.m4b` is an audiobook format, so both are
+  reported as skipped.
+
 ## Year conventions (decide with the user)
 
 - **Reissue / anniversary editions**: the edition's real release year (e.g. a 40th

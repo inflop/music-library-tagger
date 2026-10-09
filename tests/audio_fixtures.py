@@ -148,8 +148,84 @@ def write_opus(path, *, album, title, cover=None, tagged=True):
                cover=cover, tagged=tagged)
 
 
+def _atom(kind, payload=b""):
+    return struct.pack(">I", 8 + len(payload)) + kind + payload
+
+
+M4A_AUDIO = bytes(range(256)) * 5  # the mdat payload
+
+
+# Where the chunks start inside the mdat payload (the offset table lists all three).
+M4A_CHUNK_STARTS = (0, 400, 900)
+
+
+def m4a_bytes(table="stco"):
+    """An MP4 audio file mutagen accepts: ftyp, moov (with a chunk offset table), mdat.
+
+    `table` picks the offset atom: "stco" (32 bit) or "co64" (64 bit).
+    """
+    ftyp = _atom(b"ftyp", b"M4A " + struct.pack(">I", 0) + b"M4A mp42isom")
+
+    def moov(mdat_data):
+        mvhd = _atom(b"mvhd", struct.pack(">IIIIIIH", 0, 0, 0, 1000, 5000, 0x10000, 0x100)
+                     + b"\x00" * 10 + struct.pack(">9I", 0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000)
+                     + b"\x00" * 24 + struct.pack(">I", 2))
+        mdhd = _atom(b"mdhd", struct.pack(">IIIIIHH", 0, 0, 0, 44100, 220500, 0x55C4, 0))
+        hdlr = _atom(b"hdlr", struct.pack(">II", 0, 0) + b"soun" + b"\x00" * 12 + b"\x00")
+        sample = (b"\x00" * 6 + struct.pack(">H", 1)            # reserved, data ref index
+                  + struct.pack(">HHIHHHH", 0, 0, 0, 2, 16, 0, 0)  # version.. packet size
+                  + struct.pack(">I", 44100 << 16))
+        stsd = _atom(b"stsd", struct.pack(">II", 0, 1) + _atom(b"mp4a", sample + _atom(b"free")))
+        starts = [mdat_data + s for s in M4A_CHUNK_STARTS]
+        if table == "co64":
+            offsets = _atom(b"co64", struct.pack(">II", 0, len(starts))
+                            + b"".join(struct.pack(">Q", o) for o in starts))
+        else:
+            offsets = _atom(b"stco", struct.pack(">II", 0, len(starts))
+                            + b"".join(struct.pack(">I", o) for o in starts))
+        stbl = _atom(b"stbl", stsd + offsets)
+        trak = _atom(b"trak", _atom(b"mdia", mdhd + hdlr + _atom(b"minf", stbl)))
+        return _atom(b"moov", mvhd + trak)
+
+    mdat_data = len(ftyp) + len(moov(0)) + 8
+    return ftyp + moov(mdat_data) + _atom(b"mdat", M4A_AUDIO)
+
+
+def m4a_chunk_offsets(data):
+    """Every entry of the first stco / co64 table in an MP4 file's bytes."""
+    for kind, width, code in ((b"stco", 4, ">I"), (b"co64", 8, ">Q")):
+        at = data.find(kind)
+        if at >= 0:
+            count = struct.unpack(">I", data[at + 8:at + 12])[0]
+            return [struct.unpack(code, data[at + 12 + i * width:at + 12 + (i + 1) * width])[0]
+                    for i in range(count)]
+    raise AssertionError("no chunk offset table found")
+
+
+def write_m4a(path, *, album, title, cover=None, tagged=True, table="stco"):
+    from mutagen.mp4 import MP4, MP4Cover
+    Path(path).write_bytes(m4a_bytes(table))
+    if not tagged:
+        return
+    audio = MP4(str(path))
+    audio.add_tags()
+    audio["\xa9alb"] = [album]
+    audio["\xa9nam"] = [title]
+    audio["\xa9ART"] = ARTISTS
+    audio["\xa9wrt"] = ["Robert Fripp"]
+    if cover:
+        audio["covr"] = [MP4Cover(cover, imageformat=MP4Cover.FORMAT_JPEG)]
+    audio.save()
+
+
+def write_m4a_co64(path, **kw):
+    write_m4a(path, table="co64", **kw)
+
+
 # variant id -> (extension, audio payload at the end of the file, writer, backend name)
 FACTORIES = {
+    "m4a": (".m4a", M4A_AUDIO, write_m4a, "m4a"),
+    "m4a-co64": (".m4a", M4A_AUDIO, write_m4a_co64, "m4a"),
     "mp3": (".mp3", MP3_BYTES, write_mp3, "mp3"),
     "flac": (".flac", AUDIO_TAIL, write_flac, "flac"),
     "ogg-vorbis": (".ogg", OGG_AUDIO, write_ogg_vorbis, "ogg"),
