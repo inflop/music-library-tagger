@@ -24,7 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]
 
 import apply_plan  # noqa: E402
 import mp4_tags  # noqa: E402
-from audio_fixtures import M4A_AUDIO, jpeg, m4a_bytes, write_m4a  # noqa: E402
+from audio_fixtures import (M4A_AUDIO, M4A_CHUNK_STARTS, jpeg, m4a_bytes,  # noqa: E402
+                            m4a_chunk_offsets, write_m4a, write_m4a_co64)
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm  # noqa: E402
 from PIL import Image  # noqa: E402
 
@@ -49,11 +50,11 @@ class M4aLibrary(unittest.TestCase):
         self.backup = os.path.join(self.root, ".music-tagger", "backup.json")
         Path(self.disc, "new.jpg").write_bytes(jpeg((0, 160, 0), size=(600, 600)))
 
-    def track(self, name="01 - Red.m4a", **kw):
+    def track(self, name="01 - Red.m4a", _writer=write_m4a, **kw):
         path = os.path.join(self.disc, name)
         args = dict(album="old", title="old title", cover=jpeg((200, 0, 0)))
         args.update(kw)
-        write_m4a(path, **args)
+        _writer(path, **args)
         return path
 
     def plan(self, *paths, strip=(), genre="Prog"):
@@ -108,14 +109,26 @@ class TestAtoms(M4aLibrary):
         data = Path(path).read_bytes()
         self.assertEqual(data[-len(M4A_AUDIO):], M4A_AUDIO)
 
-    def test_chunk_offsets_still_point_at_the_audio_after_a_save(self):
-        path = self.track()
-        self.quiet(apply_plan.apply, self.plan(path), False)
-        data = Path(path).read_bytes()
-        at = data.index(b"stco")
-        offset = struct.unpack(">I", data[at + 12:at + 16])[0]
-        self.assertEqual(data[offset:offset + 16], M4A_AUDIO[:16])
-        self.assertEqual(MP4(path).info.length, 5.0)
+    def test_every_chunk_offset_still_points_at_its_audio_after_a_save(self):
+        # Start from a file with no tags at all: mutagen has to add the whole
+        # udta/meta/ilst tree to moov, which moves mdat, so the offsets must be
+        # rewritten. A file that already carries (padded) tags can pass without that.
+        for writer in (write_m4a, write_m4a_co64):
+            with self.subTest(table=writer.__name__):
+                path = self.track(name=writer.__name__ + ".m4a", tagged=False,
+                                  _writer=writer)
+                before = Path(path).read_bytes()
+                self.assertIsNone(MP4(path).tags)
+                self.quiet(apply_plan.apply, self.plan(path), False)
+                data = Path(path).read_bytes()
+                self.assertGreater(len(data), len(before))   # moov grew
+                offsets = m4a_chunk_offsets(data)
+                self.assertEqual(len(offsets), len(M4A_CHUNK_STARTS))
+                self.assertNotEqual(offsets, m4a_chunk_offsets(before))  # they moved
+                for offset, start in zip(offsets, M4A_CHUNK_STARTS):
+                    self.assertEqual(data[offset:offset + 16], M4A_AUDIO[start:start + 16])
+                self.assertEqual(data[-len(M4A_AUDIO):], M4A_AUDIO)
+                self.assertEqual(MP4(path).info.length, 5.0)
 
     def test_strip_frames_accepts_id3_ids_and_native_atoms(self):
         path = self.track()

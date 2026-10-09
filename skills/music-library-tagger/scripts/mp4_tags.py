@@ -18,7 +18,8 @@ pictures. An atom of any other shape is neither backed up nor rewritten: a resto
 replaces the atoms it can represent and leaves the rest where they are, like the ID3
 backend does with non-text frames.
 
-Only moov is rewritten (mutagen keeps the chunk offsets pointing at mdat); the audio
+Only moov is rewritten (mutagen rewrites the stco / co64 chunk offsets so they keep
+pointing at mdat when moov grows); the audio
 data is never touched. .mp4 (may be video), .m4b and raw .aac are not handled.
 """
 import base64
