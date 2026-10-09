@@ -24,6 +24,10 @@ _wrapper_made_by_the_script = sys.stdout
 sys.stdout = _original_stdout
 
 
+MINIMUM = 1.1   # seconds between MusicBrainz requests: what the fix promises and the docs say
+EPS = 1e-9      # float rounding in the fake clock
+
+
 class FakeClock:
     """A clock that only moves when the code under test sleeps."""
 
@@ -85,19 +89,22 @@ class RateLimit(unittest.TestCase):
         times = [t for t, url in self.requests if url.startswith(fetch_cover.MB)]
         return [b - a for a, b in zip(times, times[1:])]
 
+    def test_the_configured_interval_is_the_documented_one(self):
+        self.assertGreaterEqual(fetch_cover.MB_MIN_INTERVAL, MINIMUM)
+
     def test_the_fallback_query_waits_for_the_rate_limit(self):
         # The strict query finds nothing, so the loose fallback follows at once.
         self.answers = [{"release-groups": []}, {"release-groups": [{"id": "x"}]}]
         result = fetch_cover.mb_release_groups("Some Band", "It's: Complicated")
         self.assertEqual(result, [{"id": "x"}])
         self.assertEqual(len(self.requests), 2)
-        self.assertGreaterEqual(self.mb_gaps()[0], 1.0)
+        self.assertGreaterEqual(self.mb_gaps()[0] + EPS, MINIMUM)
 
     def test_any_two_musicbrainz_requests_are_spaced_out(self):
         for _ in range(4):
             fetch_cover._mb_query('artist:"a" AND releasegroup:"b"')
         self.assertEqual(len(self.mb_gaps()), 3)
-        self.assertTrue(all(gap >= 1.0 for gap in self.mb_gaps()), self.mb_gaps())
+        self.assertTrue(all(gap + EPS >= MINIMUM for gap in self.mb_gaps()), self.mb_gaps())
 
     def test_time_already_spent_counts_towards_the_wait(self):
         fetch_cover._mb_query("first")
@@ -109,7 +116,7 @@ class RateLimit(unittest.TestCase):
         self.answers = [OSError("boom"), {"release-groups": []}]
         fetch_cover._mb_query("flaky")
         self.assertEqual(len(self.mb_gaps()), 1)
-        self.assertGreaterEqual(self.mb_gaps()[0], 1.0)
+        self.assertGreaterEqual(self.mb_gaps()[0] + EPS, MINIMUM)
 
     def test_cover_art_archive_requests_are_not_throttled(self):
         for _ in range(3):
