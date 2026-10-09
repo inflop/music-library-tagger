@@ -11,11 +11,13 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]
@@ -257,6 +259,39 @@ class BackendContract(unittest.TestCase):
             self.assertIn("would restore tags on 1 file,", out)
             self.assertIn("1 artwork image would be reinstated", out)
             self.assertEqual([Path(p).read_bytes() for p in paths], applied)
+
+    def test_a_dry_run_notices_a_target_it_could_not_write(self):
+        # The probe is a copy, which the process owns and can always write; the real
+        # file may not be writable, and a preview that says "restorable" would be wrong.
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            os.chmod(paths[0], stat.S_IREAD)
+            self.addCleanup(os.chmod, paths[0], stat.S_IREAD | stat.S_IWRITE)
+            if os.access(paths[0], os.W_OK):
+                continue   # running as a user that ignores file permissions (root)
+            before = Path(paths[0]).read_bytes()
+
+            # What makes the probe misleading is that the copy is newly created by this
+            # process, so it is writable even when the original is not (another owner,
+            # say). copy2 keeps the read-only bit, which would hide that: make the copy
+            # writable the way a change of ownership does.
+            real_copy2 = shutil.copy2
+
+            def copy_owned_by_us(src, dst, *args, **kwargs):
+                out = real_copy2(src, dst, *args, **kwargs)
+                os.chmod(dst, stat.S_IREAD | stat.S_IWRITE)
+                return out
+
+            with mock.patch.object(apply_plan.shutil, "copy2", copy_owned_by_us):
+                dry = self.output_of(apply_plan.restore, backup, True)
+            real = self.output_of(apply_plan.restore, backup)
+
+            self.assertIn("would restore tags on 1 file,", dry)
+            self.assertIn("1 file(s) would not be restored", dry)
+            self.assertIn("1 file(s) could not be restored", real)   # the preview was right
+            self.assertEqual(Path(paths[0]).read_bytes(), before)
 
     def test_every_entry_a_restore_skips_is_reported_and_counted(self):
         # Refused paths, unsupported targets and missing files used to be skipped

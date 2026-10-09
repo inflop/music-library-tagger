@@ -304,6 +304,11 @@ def restore(backup_path, dry=False):
         try:
             pictures = load_artwork(info.get("apic"), bdir)
             if dry:
+                # The probe below is a copy this process owns, so it is always writable.
+                # Open the real file for update (writing nothing) to learn whether the
+                # real restore could replace it.
+                with open(fpath, "r+b"):
+                    pass
                 with tempfile.TemporaryDirectory(prefix="mlt-restore-") as tmp:
                     probe = os.path.join(tmp, os.path.basename(fpath))
                     shutil.copy2(fpath, probe)

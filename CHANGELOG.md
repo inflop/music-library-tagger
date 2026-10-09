@@ -11,7 +11,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   as soon as it saw `--restore`, so the flag was accepted and ignored. A dry restore now changes
   nothing and reports how many files would be restored, how many artwork images reinstated and
   which entries would fail. It runs the restore on a temporary copy of each file, so it applies
-  the same checks a real restore does.
+  the same checks a real restore does, and it also opens the real file for update (writing
+  nothing) so a target the process could not overwrite is reported rather than counted as restorable.
   Restore, dry or real, now also counts and reports every entry it skips (a path outside the
   backup root, an unsupported target, a file that no longer exists); the last two were skipped
   without being counted, and a missing file without a word.
