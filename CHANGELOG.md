@@ -6,6 +6,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `apply_plan.py --restore <backup> --dry-run` no longer performs a real restore (#4). `main()` returned
+  as soon as it saw `--restore`, so the flag was accepted and ignored. A dry restore now changes
+  nothing and reports how many files would be restored, how many artwork images reinstated and
+  which entries would fail. It runs the restore on a temporary copy of each file, so it applies
+  the same checks a real restore does.
+
 ## [1.1.0] - 2026-10-09
 
 ### Added

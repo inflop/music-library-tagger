@@ -11,6 +11,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -216,6 +217,62 @@ class BackendContract(unittest.TestCase):
             self.assertEqual([self.summary(p) for p in paths], before)
             for p in paths:
                 self.assertEqual(Path(p).read_bytes()[-len(payload):], payload)
+
+    def test_restore_dry_run_changes_nothing_and_says_what_it_would_do(self):
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            before = [self.summary(p) for p in paths]
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            applied = [Path(p).read_bytes() for p in paths]
+            folder = sorted(os.listdir(os.path.dirname(paths[0])))
+
+            out = self.output_of(apply_plan.restore, backup, True)
+
+            self.assertEqual([Path(p).read_bytes() for p in paths], applied)  # untouched
+            self.assertEqual(sorted(os.listdir(os.path.dirname(paths[0]))), folder)
+            self.assertIn("DRY-RUN", out)
+            self.assertIn("would restore tags on 2 files", out)
+            self.assertIn("2 artwork images would be reinstated", out)
+            self.assertNotIn("Restored tags on", out)
+            # and the real restore still brings the originals back afterwards
+            self.quiet(apply_plan.restore, backup)
+            self.assertEqual([self.summary(p) for p in paths], before)
+
+    def test_restore_dry_run_reports_an_entry_that_would_fail(self):
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            data = json.loads(Path(backup).read_text(encoding="utf-8"))
+            rel = next(iter(data["files"]))
+            data["files"][rel] = {k: v for k, v in data["files"][rel].items()
+                                  if k in ("format", "had_apic", "apic")}
+            Path(backup).write_text(json.dumps(data), encoding="utf-8")
+            applied = [Path(p).read_bytes() for p in paths]
+
+            out = self.output_of(apply_plan.restore, backup, True)
+
+            self.assertIn("could not restore", out)
+            self.assertIn("would restore tags on 1 files", out)
+            self.assertEqual([Path(p).read_bytes() for p in paths], applied)
+
+    def test_the_command_line_honours_dry_run_with_restore(self):
+        # The bug was in main(): --restore returned before --dry-run was looked at.
+        plan, paths, _, backup = self.library("mp3")
+        self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+        self.quiet(apply_plan.apply, plan, False)
+        applied = [Path(p).read_bytes() for p in paths]
+        script = Path(apply_plan.__file__)
+        done = subprocess.run([sys.executable, str(script), "--restore", backup, "--dry-run"],
+                              capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("DRY-RUN", done.stdout)
+        self.assertEqual([Path(p).read_bytes() for p in paths], applied)
+        done = subprocess.run([sys.executable, str(script), "--restore", backup],
+                              capture_output=True, text=True, encoding="utf-8")
+        self.assertIn("Restored tags on 2 files", done.stdout)
+        self.assertNotEqual([Path(p).read_bytes() for p in paths], applied)
 
     def test_untagged_files_end_up_untagged_after_a_restore(self):
         for kind in self.each_kind():

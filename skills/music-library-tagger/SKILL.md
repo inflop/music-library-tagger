@@ -134,7 +134,8 @@ Re-run `analyze.py` and confirm names/years/discs/covers are consistent. Tell th
 ## Restore
 
 `python "$SKILL/scripts/apply_plan.py" --restore "<ROOT>/.music-tagger/tags_backup_<ts>.json"`
-reverts text tags and re-embeds the artwork each file originally had, read from the
+reverts text tags and re-embeds the artwork each file originally had (add `--dry-run` first to
+preview it: nothing is changed and the entries that would fail are listed), read from the
 `tags_backup_<ts>_art/` folder written next to the backup — keep the two together.
 (Copied/moved image files and `cover.jpg` are logged but not auto-deleted — remove them
 manually if needed. Prefer `move_images_mode: "copy"` unless the user explicitly wants
