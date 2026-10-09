@@ -11,7 +11,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   MP3/ID3, and `apply_plan.py` writes, backs up and restores them. A folder may mix both
   formats. `plan.json` is unchanged; `id3_version` is ignored for FLAC and `strip_frames`
   accepts ID3 frame ids (`COMM`, `TENC`, ...) or Vorbis field names.
-- `analyze.py` lists audio it cannot tag (`.m4a`, `.ogg`, `.opus`, `.wav`, ...) under
+- `analyze.py` lists audio it cannot tag (for example `.wav`, `.wv`, `.ape`) under
   `skipped_audio` in the JSON and in a `SKIPPED AUDIO` section of the report, instead of
   silently leaving those albums out. The JSON also gains `formats` and a per-track `format`.
 

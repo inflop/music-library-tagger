@@ -19,7 +19,7 @@ music server (Navidrome, Plex, Jellyfin, Subsonic…) displays correctly.
 
 **Golden rules**
 - **Never touch the audio stream** — only tags (ID3 for MP3, Vorbis comments for FLAC and Ogg) and
-  artwork. Other audio formats (m4a, ogg, opus, wav…) are not supported: `analyze.py` lists
+  artwork. Other audio formats (m4a, wav, wv, ape…) are not supported: `analyze.py` lists
   them as skipped — tell the user, and never try to tag them by hand.
 - **Always back up first** (`apply_plan.py` backs up every text tag and every embedded
   cover before any change, so a restore brings back the user's original covers too;

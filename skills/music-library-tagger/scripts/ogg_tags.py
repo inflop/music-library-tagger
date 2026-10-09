@@ -53,12 +53,17 @@ def _encode(pic):
 
 
 def _split(tags):
-    """([[name, value], ...] without decodable pictures, [Picture, ...])."""
+    """([[name, value], ...] without usable pictures, [Picture, ...]).
+
+    A picture comment that cannot be decoded, or decodes to an empty image, stays in
+    the comment list verbatim: backup_tags() does not store images without data, so
+    treating it as a picture would make it vanish on restore.
+    """
     comments, pictures = [], []
     for key, value in tags:
         if str(key).lower() == PICTURE_FIELD:
             pic = _decode(value)
-            if pic is not None:
+            if pic is not None and pic.data:
                 pictures.append(pic)
                 continue
         comments.append([key, value])

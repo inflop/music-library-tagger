@@ -3,7 +3,8 @@
 ## What this plugin does on your machine
 
 - **Reads** MP3, FLAC and Ogg Vorbis / Opus files and image files under the folder you point it at. Other audio
-  formats are only listed as skipped, never opened.
+  formats are only listed as skipped, never opened. (A Speex, Ogg FLAC or Theora stream with an
+  Ogg extension is opened by the Ogg reader only to recognise it, then left unchanged.)
 - **Writes** ID3 tags (MP3), Vorbis comments (FLAC, Ogg), embedded artwork and `cover.jpg` files in that same folder, plus a
   working directory `.music-tagger/` (analysis, plan, tag backups, downloaded covers).
 - **Never** re-encodes or rewrites the audio stream.

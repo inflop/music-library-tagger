@@ -122,6 +122,12 @@ class TestOggBackup(OggLibrary):
 
     def test_picture_dimensions_survive_a_round_trip(self):
         path = self.track(".opus")
+        audio = MFile(path)
+        pic = Picture()
+        pic.type, pic.mime, pic.desc, pic.data = 3, "image/jpeg", "Front", jpeg((9, 9, 9))
+        pic.width, pic.height, pic.depth, pic.colors = 7, 8, 24, 5
+        audio["METADATA_BLOCK_PICTURE"] = [base64.b64encode(pic.write()).decode("ascii")]
+        audio.save()
         before = MFile(path).tags["METADATA_BLOCK_PICTURE"]
         self.quiet(apply_plan.backup_tags, self.root, self.plan(path), self.backup)
         self.quiet(apply_plan.apply, self.plan(path), False)
@@ -129,8 +135,22 @@ class TestOggBackup(OggLibrary):
         after = MFile(path).tags["METADATA_BLOCK_PICTURE"]
         self.assertEqual(len(after), 1)
         old, new = Picture(base64.b64decode(before[0])), Picture(base64.b64decode(after[0]))
-        self.assertEqual((new.type, new.mime, new.desc, new.data),
-                         (old.type, old.mime, old.desc, old.data))
+        fields = ("type", "mime", "desc", "data", "width", "height", "depth", "colors")
+        self.assertEqual([getattr(new, f) for f in fields], [getattr(old, f) for f in fields])
+        self.assertEqual((new.width, new.height, new.depth, new.colors), (7, 8, 24, 5))
+
+    def test_a_picture_comment_with_an_empty_image_is_kept_as_it_was(self):
+        path = self.track(".opus")
+        audio = MFile(path)
+        empty = Picture()
+        empty.type, empty.mime = 3, "image/jpeg"  # decodes fine, holds no image
+        blank = base64.b64encode(empty.write()).decode("ascii")
+        audio["METADATA_BLOCK_PICTURE"] = [blank]
+        audio.save()
+        self.quiet(apply_plan.backup_tags, self.root, self.plan(path), self.backup)
+        self.quiet(apply_plan.apply, self.plan(path), False)
+        self.quiet(apply_plan.restore, self.backup)
+        self.assertEqual(MFile(path).tags["METADATA_BLOCK_PICTURE"], [blank])
 
     def test_an_undecodable_picture_comment_is_kept_as_it_was(self):
         path = self.track(".ogg")
