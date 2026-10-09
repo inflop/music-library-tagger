@@ -232,6 +232,15 @@ class TestStreamsThatAreNotOggVorbis(OggLibrary):
             ogg_tags.write(path, {"album": "x"}, set(), None, {})
         self.assertEqual(Path(path).read_bytes(), before)
 
+    def test_a_dry_run_does_not_count_such_a_file_as_taggable(self):
+        good = self.track(".ogg", "01")
+        other = self.unknown_codec("02.ogg")
+        plan = self.plan(good, other)
+        out = self.quiet(apply_plan.apply, plan, True)
+        self.assertIn("cannot read", out)
+        self.assertIn('"tracks": 1', out)
+        self.assertIn('"unreadable": 1', out)
+
     def test_analyze_lists_such_a_file_as_unreadable(self):
         self.unknown_codec("01.ogg")
         out = Path(self.tmp) / "out.json"

@@ -106,6 +106,21 @@ def within(base, rel):
     return target
 
 
+def unreadable_reason(backend, path):
+    """None if the backend can open the file, else why it cannot.
+
+    The extension alone proves nothing: a Speex stream named .ogg, a truncated or
+    mislabelled file. Such a file is skipped by the backup and by apply alike, so a
+    file that was not backed up is never written, and one bad file does not abort
+    the run (or, in a dry run, get counted as taggable).
+    """
+    try:
+        backend.read_summary(path)
+    except Exception as e:
+        return "%s: %s" % (type(e).__name__, e)
+    return None
+
+
 def process_cover_bytes(img_path, max_px):
     """Return clean JPEG bytes (RGB, no EXIF) for embedding / cover.jpg."""
     from PIL import Image
@@ -152,6 +167,11 @@ def backup_tags(root, plan, backup_path):
                 backend = tagio.backend_for(fpath)
                 if backend is None:
                     log("  !! not a supported audio file, not backed up: %s" % fpath)
+                    continue
+                why = unreadable_reason(backend, fpath)
+                if why:
+                    log("  !! cannot read %s (%s): not backed up, and apply will not touch it"
+                        % (fpath, why))
                     continue
                 payload, pictures = backend.snapshot(fpath)
                 art = []
@@ -300,7 +320,8 @@ def apply(plan, dry):
     def_aa = opt.get("album_artist")
     def_genre = opt.get("genre")
 
-    changes = {"tracks": 0, "covers_embedded": 0, "cover_jpgs": 0, "moved": 0}
+    changes = {"tracks": 0, "covers_embedded": 0, "cover_jpgs": 0, "moved": 0,
+               "unreadable": 0}
 
     for alb in plan["albums"]:
         album = alb["album"]
@@ -348,6 +369,11 @@ def apply(plan, dry):
                 backend = tagio.backend_for(fpath)
                 if backend is None:
                     log("  !! not a supported audio file, skipped: %s" % fpath)
+                    continue
+                why = unreadable_reason(backend, fpath)
+                if why:
+                    log("  !! cannot read %s (%s), skipped" % (fpath, why))
+                    changes["unreadable"] += 1
                     continue
 
                 use_cover = embed and has_cover

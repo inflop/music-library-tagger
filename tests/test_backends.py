@@ -150,6 +150,27 @@ class BackendContract(unittest.TestCase):
             self.assertIn("not a supported audio file", out)
             self.assertEqual(Path(victim).read_bytes(), b"key = value")
 
+    def test_a_file_its_backend_cannot_read_is_skipped_everywhere(self):
+        # A name with a supported extension is not proof the file is readable: the
+        # dry run must not count it, and a real run must neither crash on it nor touch it.
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            junk = os.path.join(os.path.dirname(paths[0]), "99 - Broken" + FACTORIES[kind][0])
+            Path(junk).write_bytes(b"this is not audio")
+            plan["albums"][0]["discs"][0]["tracks"].append(
+                {"file": os.path.basename(junk), "track": 3, "title": "x"})
+
+            dry = self.output_of(apply_plan.apply, plan, True)
+            counts = json.loads(dry.split("SUMMARY:", 1)[1].strip())
+            self.assertEqual((counts["tracks"], counts["unreadable"]), (2, 1))
+            self.assertIn("cannot read", dry)
+
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.assertNotIn("Broken", Path(backup).read_text(encoding="utf-8"))
+            self.quiet(apply_plan.apply, plan, False)
+            self.assertEqual(Path(junk).read_bytes(), b"this is not audio")
+            self.assertEqual(self.summary(paths[0])["album"], "Red")
+
     def test_dry_run_changes_nothing(self):
         for kind in self.each_kind():
             plan, paths, _, _ = self.library(kind)
