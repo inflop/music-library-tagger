@@ -19,7 +19,7 @@ Only tags and artwork are touched -- the audio stream is never re-encoded.
 
 Usage:
     python apply_plan.py --plan plan.json [--dry-run]
-    python apply_plan.py --restore <backup.json>
+    python apply_plan.py --restore <backup.json> [--dry-run]
 
 plan.json schema (all paths are RELATIVE to "root", forward slashes ok):
 {
@@ -57,7 +57,7 @@ plan.json schema (all paths are RELATIVE to "root", forward slashes ok):
   ]
 }
 """
-import os, sys, io, json, time, argparse, shutil, hashlib
+import os, sys, io, json, time, argparse, shutil, hashlib, stat, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -104,6 +104,11 @@ def within(base, rel):
         # Different drives, or a mix of absolute and relative paths.
         return None
     return target
+
+
+def count(n, noun):
+    """'1 file', '2 files': the noun agrees with the number."""
+    return "%d %s%s" % (n, noun, "" if n == 1 else "s")
 
 
 def unreadable_reason(backend, path):
@@ -248,7 +253,14 @@ def load_artwork(art, bdir):
     return out
 
 
-def restore(backup_path):
+def restore(backup_path, dry=False):
+    """Undo a run from its backup. With `dry`, change nothing and say what would happen.
+
+    A dry run restores onto a temporary copy of each file, so it exercises exactly the
+    checks a real restore does (entry shape, artwork, the file's real format) and reports
+    entries that would fail. The original is never modified: it is opened for update
+    (r+b) with nothing written, only to learn whether the real restore could replace it.
+    """
     with open(backup_path, encoding="utf-8") as f:
         data = json.load(f)
     # Check the shape once here rather than guarding every field downstream.
@@ -271,12 +283,16 @@ def restore(backup_path):
         fpath = within(root, rel.replace("/", os.sep))
         if fpath is None:
             log("  !! refusing path outside the backup root: %s" % rel)
+            failed += 1
             continue
         backend = tagio.backend_for(fpath)
         if backend is None:
             log("  !! refusing a target that is not a supported audio file: %s" % rel)
+            failed += 1
             continue
         if not os.path.isfile(fpath):
+            log("  !! %s is missing, nothing to restore" % rel)
+            failed += 1
             continue
         if info.get("format", tagio.LEGACY_FORMAT) != backend.NAME:
             log("  !! backup entry does not match the file type, skipped: %s" % rel)
@@ -288,7 +304,22 @@ def restore(backup_path):
             legacy += 1
         try:
             pictures = load_artwork(info.get("apic"), bdir)
-            backend.restore(fpath, info, pictures)
+            if dry:
+                # The probe below is a copy this process owns, so it is always writable.
+                # Open the real file for update (writing nothing) to learn whether the
+                # real restore could replace it.
+                with open(fpath, "r+b"):
+                    pass
+                with tempfile.TemporaryDirectory(prefix="mlt-restore-") as tmp:
+                    probe = os.path.join(tmp, os.path.basename(fpath))
+                    shutil.copy2(fpath, probe)
+                    # The real file passed the update check above; the copy is this
+                    # process's own, and copy2 carried the source's permission bits
+                    # over (a group-writable file, say, is read-only for its new owner).
+                    os.chmod(probe, stat.S_IREAD | stat.S_IWRITE)
+                    backend.restore(probe, info, pictures)
+            else:
+                backend.restore(fpath, info, pictures)
             n_art += len(pictures)
         except Exception as e:
             # Undoing a run halfway is worse than skipping one file, so a damaged
@@ -297,13 +328,18 @@ def restore(backup_path):
             log("  !! could not restore %s: %s: %s" % (rel, type(e).__name__, e))
             continue
         n += 1
-    log("Restored tags on %d files, %d artwork images reinstated "
-        "(moved image files NOT reverted)." % (n, n_art))
+    if dry:
+        log("DRY-RUN: would restore tags on %s, %s would be reinstated "
+            "(nothing was changed)." % (count(n, "file"), count(n_art, "artwork image")))
+    else:
+        log("Restored tags on %s, %s reinstated "
+            "(moved image files NOT reverted)." % (count(n, "file"), count(n_art, "artwork image")))
     if legacy:
         log("  !! %d file(s) came from an old backup that stored no artwork -- "
             "their original embedded covers could not be restored." % legacy)
     if failed:
-        log("  !! %d file(s) could not be restored -- see the lines above." % failed)
+        log("  !! %d file(s) %s be restored -- see the lines above."
+            % (failed, "would not" if dry else "could not"))
 
 
 # ------------------------------- apply -------------------------------
@@ -424,7 +460,7 @@ def main():
     args = ap.parse_args()
 
     if args.restore:
-        restore(args.restore); return
+        restore(args.restore, args.dry_run); return
 
     if not args.plan:
         ap.error("--plan or --restore required")

@@ -11,10 +11,13 @@ import io
 import json
 import os
 import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]
@@ -216,6 +219,161 @@ class BackendContract(unittest.TestCase):
             self.assertEqual([self.summary(p) for p in paths], before)
             for p in paths:
                 self.assertEqual(Path(p).read_bytes()[-len(payload):], payload)
+
+    def test_restore_dry_run_changes_nothing_and_says_what_it_would_do(self):
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            before = [self.summary(p) for p in paths]
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            applied = [Path(p).read_bytes() for p in paths]
+            folder = sorted(os.listdir(os.path.dirname(paths[0])))
+
+            out = self.output_of(apply_plan.restore, backup, True)
+
+            self.assertEqual([Path(p).read_bytes() for p in paths], applied)  # untouched
+            self.assertEqual(sorted(os.listdir(os.path.dirname(paths[0]))), folder)
+            self.assertIn("DRY-RUN", out)
+            self.assertIn("would restore tags on 2 files", out)
+            self.assertIn("2 artwork images would be reinstated", out)
+            self.assertNotIn("Restored tags on", out)
+            # and the real restore still brings the originals back afterwards
+            self.quiet(apply_plan.restore, backup)
+            self.assertEqual([self.summary(p) for p in paths], before)
+
+    def test_restore_dry_run_reports_an_entry_that_would_fail(self):
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            data = json.loads(Path(backup).read_text(encoding="utf-8"))
+            rel = next(iter(data["files"]))
+            data["files"][rel] = {k: v for k, v in data["files"][rel].items()
+                                  if k in ("format", "had_apic", "apic")}
+            Path(backup).write_text(json.dumps(data), encoding="utf-8")
+            applied = [Path(p).read_bytes() for p in paths]
+
+            out = self.output_of(apply_plan.restore, backup, True)
+
+            self.assertIn("could not restore", out)
+            self.assertIn("would restore tags on 1 file,", out)
+            self.assertIn("1 artwork image would be reinstated", out)
+            self.assertEqual([Path(p).read_bytes() for p in paths], applied)
+
+    def test_a_dry_run_notices_a_target_it_could_not_write(self):
+        # The probe is a copy, which the process owns and can always write; the real
+        # file may not be writable, and a preview that says "restorable" would be wrong.
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            os.chmod(paths[0], stat.S_IREAD)
+            self.addCleanup(os.chmod, paths[0], stat.S_IREAD | stat.S_IWRITE)
+            if os.access(paths[0], os.W_OK):
+                continue   # running as a user that ignores file permissions (root)
+            before = Path(paths[0]).read_bytes()
+
+            # What makes the probe misleading is that the copy is newly created by this
+            # process, so it is writable even when the original is not (another owner,
+            # say). copy2 keeps the read-only bit, which would hide that: make the copy
+            # writable the way a change of ownership does.
+            real_copy2 = shutil.copy2
+
+            def copy_owned_by_us(src, dst, *args, **kwargs):
+                out = real_copy2(src, dst, *args, **kwargs)
+                os.chmod(dst, stat.S_IREAD | stat.S_IWRITE)
+                return out
+
+            with mock.patch.object(apply_plan.shutil, "copy2", copy_owned_by_us):
+                dry = self.output_of(apply_plan.restore, backup, True)
+            real = self.output_of(apply_plan.restore, backup)
+
+            self.assertIn("would restore tags on 1 file,", dry)
+            self.assertIn("1 file(s) would not be restored", dry)
+            self.assertIn("1 file(s) could not be restored", real)   # the preview was right
+            self.assertEqual(Path(paths[0]).read_bytes(), before)
+
+    def test_a_dry_run_is_not_failed_by_the_permissions_of_its_own_copy(self):
+        # A file owned by someone else and writable through its group bits (0460) is
+        # writable for the real restore. Its copy belongs to this process, so the copied
+        # owner bits (read-only) would stop the probe: a false "would not be restored".
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            real_copy2 = shutil.copy2
+
+            def copy_with_unwritable_owner_bits(src, dst, *args, **kwargs):
+                out = real_copy2(src, dst, *args, **kwargs)
+                os.chmod(dst, stat.S_IREAD)
+                return out
+
+            with mock.patch.object(apply_plan.shutil, "copy2", copy_with_unwritable_owner_bits):
+                dry = self.output_of(apply_plan.restore, backup, True)
+
+            self.assertIn("would restore tags on 2 files,", dry)
+            self.assertNotIn("would not be restored", dry)
+
+    def test_every_entry_a_restore_skips_is_reported_and_counted(self):
+        # Refused paths, unsupported targets and missing files used to be skipped
+        # without being counted (and a missing file without a word), so the summary
+        # could look complete when entries had been left out.
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            data = json.loads(Path(backup).read_text(encoding="utf-8"))
+            template = next(iter(data["files"].values()))
+            ext = FACTORIES[kind][0]
+            data["files"]["../outside" + ext] = template                  # escapes the root
+            data["files"]["settings.cfg"] = template                      # not audio
+            gone = os.path.relpath(paths[1], plan["root"]).replace("\\", "/")
+            data["files"][gone] = template                                # file was removed
+            os.remove(paths[1])
+            Path(backup).write_text(json.dumps(data), encoding="utf-8")
+
+            dry = self.output_of(apply_plan.restore, backup, True)
+            real = self.output_of(apply_plan.restore, backup)
+
+            for out, footer in ((dry, "3 file(s) would not be restored"),
+                                (real, "3 file(s) could not be restored")):
+                self.assertIn("refusing path outside the backup root", out)
+                self.assertIn("refusing a target that is not a supported audio file", out)
+                self.assertIn("is missing, nothing to restore", out)
+                self.assertIn(footer, out)
+            self.assertIn("would restore tags on 1 file,", dry)
+            self.assertIn("Restored tags on 1 file,", real)
+
+    def test_the_restore_summary_uses_the_singular_for_one(self):
+        for kind in self.each_kind():
+            plan, paths, _, backup = self.library(kind)
+            plan["albums"][0]["discs"][0]["tracks"].pop()      # a one-track album
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            dry = self.output_of(apply_plan.restore, backup, True)
+            real = self.output_of(apply_plan.restore, backup)
+            self.assertIn("would restore tags on 1 file, 1 artwork image would be reinstated", dry)
+            self.assertIn("Restored tags on 1 file, 1 artwork image reinstated", real)
+            for text in (dry, real):
+                self.assertNotIn("1 files", text)
+                self.assertNotIn("1 artwork images", text)
+
+    def test_the_command_line_honours_dry_run_with_restore(self):
+        # The bug was in main(): --restore returned before --dry-run was looked at.
+        plan, paths, _, backup = self.library("mp3")
+        self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+        self.quiet(apply_plan.apply, plan, False)
+        applied = [Path(p).read_bytes() for p in paths]
+        script = Path(apply_plan.__file__)
+        done = subprocess.run([sys.executable, str(script), "--restore", backup, "--dry-run"],
+                              capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("DRY-RUN", done.stdout)
+        self.assertEqual([Path(p).read_bytes() for p in paths], applied)
+        done = subprocess.run([sys.executable, str(script), "--restore", backup],
+                              capture_output=True, text=True, encoding="utf-8")
+        self.assertIn("Restored tags on 2 files", done.stdout)
+        self.assertNotEqual([Path(p).read_bytes() for p in paths], applied)
 
     def test_untagged_files_end_up_untagged_after_a_restore(self):
         for kind in self.each_kind():
