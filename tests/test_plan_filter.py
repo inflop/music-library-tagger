@@ -209,6 +209,18 @@ class TestCommandLine(Library):
         self.assertEqual(self.tagged(), ["1974 - Red"])          # nothing was restored
 
 
+class TestFailedBackup(Library):
+    def test_a_backup_that_fails_leaves_no_reserved_empty_file_behind(self):
+        # The name is reserved before the backup is written. If writing fails, an empty
+        # tags_backup_*.json would look like a backup and fail --restore confusingly.
+        argv = ["apply_plan.py", "--plan", str(self.plan_path), "--albums", "Red"]
+        with mock.patch.object(sys, "argv", argv),                 mock.patch.object(apply_plan, "backup_tags", side_effect=OSError("disk full")),                 contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(OSError):
+                apply_plan.main()
+        self.assertEqual(list(self.backups.glob("tags_backup_*")), [])
+        self.assertEqual(self.tagged(), [])                  # and nothing was applied
+
+
 class TestBackupNames(Library):
     def test_a_new_backup_never_reuses_an_existing_name(self):
         self.backups.mkdir(parents=True, exist_ok=True)
@@ -232,6 +244,21 @@ class TestBackupNames(Library):
             second = apply_plan.new_backup_path(str(self.backups))   # nothing written in between
         self.assertNotEqual(first, second)
         self.assertTrue(os.path.exists(first) and os.path.exists(second))
+
+    def test_the_reserved_file_gets_ordinary_permissions_not_executable_ones(self):
+        # os.open without a mode creates 0o777 before the umask, so a backup would be
+        # born executable (0o775 under a 002 umask), unlike one written by open(..., "w").
+        self.backups.mkdir(parents=True, exist_ok=True)
+        modes = []
+        real_open = os.open
+
+        def recording_open(path, flags, mode=0o777, *args, **kwargs):
+            modes.append(mode)
+            return real_open(path, flags, mode, *args, **kwargs)
+
+        with mock.patch.object(apply_plan.os, "open", recording_open):
+            apply_plan.new_backup_path(str(self.backups))
+        self.assertEqual(modes, [0o666])
 
     def test_two_pilots_in_the_same_second_keep_both_backups(self):
         # Pilots make several runs in quick succession likely. A shared name would let the

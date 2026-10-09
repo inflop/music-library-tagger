@@ -516,7 +516,8 @@ def new_backup_path(bdir):
         path = os.path.join(bdir, name)
         if not os.path.exists(os.path.splitext(path)[0] + "_art"):
             try:
-                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                # 0o666, like open(..., 'w'): the umask trims it; the default 0o777 would make an executable backup.
+                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666))
                 return path
             except FileExistsError:
                 pass
@@ -563,7 +564,17 @@ def main():
         bdir = args.backup_dir or os.path.join(root, ".music-tagger")
         os.makedirs(bdir, exist_ok=True)
         bpath = new_backup_path(bdir)
-        backup_tags(root, plan, bpath)
+        try:
+            backup_tags(root, plan, bpath)
+        except BaseException:
+            # The name was reserved before anything was written. An empty or half-written
+            # file would pass for a backup and confuse --restore, so take it away.
+            for leftover in (bpath, os.path.splitext(bpath)[0] + "_art"):
+                if os.path.isdir(leftover):
+                    shutil.rmtree(leftover, ignore_errors=True)
+                elif os.path.exists(leftover):
+                    os.remove(leftover)
+            raise
 
     apply(plan, args.dry_run)
 

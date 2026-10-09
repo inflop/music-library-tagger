@@ -91,7 +91,7 @@ G:/Music/King Crimson/
 ## Safety
 
 - **The audio stream is never touched** — only tags (ID3 / Vorbis comments) and artwork.
-- **Every run backs up all text tags first** to `.music-tagger/tags_backup_<ts>.json`.
+- **Every run backs up the text tags of the files it is about to change first** (all albums in the plan, or only those picked with `--albums` / `--limit`) to `.music-tagger/tags_backup_<ts>.json`; a backup never overwrites an earlier one.
 - **Reversible**: `python apply_plan.py --restore .music-tagger/tags_backup_<ts>.json` (add `--dry-run` to preview it)
 - **Approval gate**: the plan is shown and must be accepted; a dry run and a pilot come first.
 - **Privacy**: no personal data (name, e-mail, username, local paths) is ever written into
