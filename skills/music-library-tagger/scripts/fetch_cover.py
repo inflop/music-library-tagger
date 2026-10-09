@@ -50,10 +50,12 @@ def _wait_for_musicbrainz():
 def _get(url, accept="application/json", tries=4):
     last = None
     for i in range(tries):
-        if url.startswith(MB):
-            _wait_for_musicbrainz()
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept})
+            if url.startswith(MB):
+                # Last thing before the network call, so the spacing is between the
+                # requests themselves and not skewed by the time spent building them.
+                _wait_for_musicbrainz()
             with urllib.request.urlopen(req, timeout=30) as r:
                 return r.read(), r.status
         except Exception as e:

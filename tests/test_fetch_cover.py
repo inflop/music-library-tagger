@@ -89,6 +89,23 @@ class RateLimit(unittest.TestCase):
         times = [t for t, url in self.requests if url.startswith(fetch_cover.MB)]
         return [b - a for a, b in zip(times, times[1:])]
 
+    def test_the_wait_is_measured_to_the_moment_the_request_goes_out(self):
+        # Building the request takes time too. If the clock were read before that, a
+        # slow build followed by a fast one would put the two requests closer than 1.1 s.
+        build_times = [0.6, 0.0]
+
+        real_request = fetch_cover.urllib.request.Request
+
+        def slow_request(*args, **kwargs):
+            self.clock.tick(build_times.pop(0))
+            return real_request(*args, **kwargs)
+
+        with mock.patch.object(fetch_cover.urllib.request, "Request", slow_request):
+            fetch_cover._mb_query("first")
+            fetch_cover._mb_query("second")
+        self.assertEqual(len(self.mb_gaps()), 1)
+        self.assertGreaterEqual(self.mb_gaps()[0] + EPS, MINIMUM)
+
     def test_the_configured_interval_is_the_documented_one(self):
         self.assertGreaterEqual(fetch_cover.MB_MIN_INTERVAL, MINIMUM)
 
