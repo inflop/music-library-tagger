@@ -36,9 +36,12 @@ Any change must preserve these, or it will not be merged:
 ## Scope
 
 In scope: MP3/ID3 and FLAC/Vorbis-comment correctness, cover art, multi-disc handling,
-music-server compatibility. FLAC-specific code lives in `scripts/flac_tags.py`.
+music-server compatibility. Each tag format is a backend module (`scripts/id3_tags.py`,
+`scripts/flac_tags.py`) registered in `scripts/tagio.py`, which also documents the interface.
+`apply_plan.py` and `analyze.py` must stay free of format-specific tag names. To add a format:
+one backend module, one line in `BACKENDS`, one fixture writer in `tests/audio_fixtures.py`
+(`tests/test_backends.py` then runs the shared contract tests against it).
 
 Out of scope (for now): MP4/M4A, Ogg Vorbis and Opus tag formats (they are reported as
 skipped by `analyze.py`, never touched), transcoding, downloading music, library-wide
-multi-artist runs. A new tag format needs its own module like `flac_tags.py` — open an
-issue first.
+multi-artist runs. A new tag format needs its own backend module — open an issue first.

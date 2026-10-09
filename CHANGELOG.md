@@ -16,6 +16,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   silently leaving those albums out. The JSON also gains `formats` and a per-track `format`.
 
 ### Changed
+- Tag formats are now backends behind one interface (#12): `scripts/id3_tags.py` and
+  `scripts/flac_tags.py`, registered in `scripts/tagio.py`. `apply_plan.py` and `analyze.py` no
+  longer contain format-specific code; the MP3 behaviour and backup layout are unchanged. The
+  restore message for an unsupported target now reads "not a supported audio file".
 - Backup entries for FLAC files carry `"format": "flac"` and a `vorbis` list of
   `[name, value]` pairs. Entries without `format` are read as ID3, so existing backups
   still restore.

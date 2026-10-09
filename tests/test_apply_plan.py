@@ -576,7 +576,7 @@ class TestPathContainment(TempLibrary):
             info = list(data["files"].values())[0]
             data["files"] = {"settings.cfg": info}
         out = self.craft(mutate)
-        self.assertIn("not an MP3", out)
+        self.assertIn("not a supported audio file", out)
         with open(victim, "rb") as f:
             self.assertEqual(f.read(), original, "a non-MP3 file was rewritten")
 

@@ -22,12 +22,12 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from mutagen import File as MFile
+    import mutagen  # noqa: F401  (the backends need it)
 except Exception:
     sys.stderr.write("ERROR: mutagen not installed. Run: python -m pip install mutagen\n")
     raise
 
-import flac_tags
+import tagio
 
 try:
     from PIL import Image
@@ -38,10 +38,8 @@ except Exception:
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 IMG_EXT = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif")
-AUDIO_EXT = (".mp3",) + flac_tags.FLAC_EXT  # formats whose tags can be read and written
-# Audio this tool cannot tag. It is never read or touched, only reported.
-SKIPPED_AUDIO_EXT = (".m4a", ".mp4", ".aac", ".ogg", ".oga", ".opus", ".wav",
-                     ".wv", ".ape", ".wma", ".aiff", ".aif", ".dsf", ".dff", ".mpc")
+AUDIO_EXT = tagio.AUDIO_EXT  # formats whose tags can be read and written
+SKIPPED_AUDIO_EXT = tagio.SKIPPED_AUDIO_EXT  # recognised, never touched, only reported
 
 # A disc subfolder name must START with a disc token (CD1, CD 1, Disc 2, DVD 1,
 # Vol. I, Volume 2, CD One …). Anchoring at the start avoids false matches inside
@@ -53,47 +51,6 @@ WORDNUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
 DISC_ANCHOR = re.compile(
     r"(?i)^\s*(?:cd|dis[ck]|dvd|vol(?:ume)?)\s*[-_.#]?\s*"
     r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|[ivx]+)\b")
-
-
-def txt(tags, key):
-    if tags is None:
-        return ""
-    fr = tags.get(key)
-    if fr is None:
-        return ""
-    try:
-        return "; ".join(str(x) for x in fr.text)
-    except Exception:
-        return str(fr)
-
-
-def summarize_id3(path):
-    """Tags of one MP3 file in the shape flac_tags.read_summary() returns."""
-    tg = MFile(path).tags
-    fields = []
-    comments = []
-    n_pictures = 0
-    if tg is not None:
-        for k in tg.keys():
-            base = k.split(":")[0]
-            fields.append(base)
-            if base == "APIC":
-                n_pictures += 1
-            if base == "COMM":
-                comments.append(txt(tg, k))
-    return {
-        "title": txt(tg, "TIT2"),
-        "track": txt(tg, "TRCK"),
-        "disc": txt(tg, "TPOS"),
-        "album": txt(tg, "TALB"),
-        "artist": txt(tg, "TPE1"),
-        "album_artist": txt(tg, "TPE2"),
-        "genre": txt(tg, "TCON"),
-        "year": txt(tg, "TDRC") or txt(tg, "TYER"),
-        "n_pictures": n_pictures,
-        "fields": fields,
-        "comments": comments,
-    }
 
 
 def disc_number_from_name(name):
@@ -222,11 +179,12 @@ def main():
             tracks = []
             for fn in files:
                 total_tracks += 1
-                fmt = "flac" if flac_tags.is_flac(fn) else "mp3"
+                backend = tagio.backend_for(fn)
+                fmt = backend.NAME
                 formats[fmt] += 1
                 path = os.path.join(df, fn)
                 try:
-                    s = flac_tags.read_summary(path) if fmt == "flac" else summarize_id3(path)
+                    s = backend.read_summary(path)
                 except Exception:
                     tracks.append({"file": fn, "format": fmt, "error": True}); continue
                 for field in s["fields"]:

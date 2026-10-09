@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-FLAC tag access (Vorbis comments + picture blocks) for analyze.py / apply_plan.py.
+FLAC (Vorbis comments + picture blocks) tag backend; see tagio.py for the interface.
 
-Everything FLAC-specific lives here so the ID3 code paths stay untouched. Only the
-metadata blocks are rewritten; mutagen leaves the audio frames alone.
+Everything FLAC-specific lives here. Only the metadata blocks are rewritten;
+mutagen leaves the audio frames alone. A restore replaces all comments and all
+pictures with the backed-up ones; a FLAC that had no comment block ends up
+without one.
 
 Field mapping used when writing (MusicBrainz Picard convention):
     album -> ALBUM            artist -> ARTIST        album artist -> ALBUMARTIST
@@ -17,7 +19,8 @@ import io
 
 from mutagen.flac import FLAC, Picture
 
-FLAC_EXT = (".flac",)
+NAME = "flac"
+EXTENSIONS = (".flac",)
 
 # options.strip_frames holds ID3 frame ids. Map the ones that have a Vorbis
 # equivalent; any other name is taken as a Vorbis field name (case-insensitive).
@@ -29,10 +32,6 @@ STRIP_ALIASES = {
     "TPUB": ("ORGANIZATION", "LABEL", "PUBLISHER"),
     "TCOM": ("COMPOSER",),
 }
-
-
-def is_flac(path):
-    return str(path).lower().endswith(FLAC_EXT)
 
 
 def _first(tags, *names):
@@ -81,10 +80,10 @@ def read_summary(path):
 
 
 def snapshot(path):
-    """Return (comments, pictures) exactly as stored, for the backup.
+    """Return (payload, pictures) exactly as stored, for the backup.
 
-    comments is a list of [name, value] pairs (order, case and repeated names
-    kept) or None when the file has no Vorbis comment block at all.
+    payload["vorbis"] is a list of [name, value] pairs (order, case and repeated
+    names kept) or None when the file has no Vorbis comment block at all.
     """
     audio = FLAC(path)
     comments = None if audio.tags is None else [[k, v] for k, v in audio.tags]
@@ -92,7 +91,7 @@ def snapshot(path):
                  "desc": p.desc, "width": p.width, "height": p.height,
                  "depth": p.depth, "colors": p.colors}
                 for p in audio.pictures]
-    return comments, pictures
+    return {"vorbis": comments}, pictures
 
 
 def _picture(data, mime="image/jpeg", type=3, desc="Front",
@@ -104,12 +103,26 @@ def _picture(data, mime="image/jpeg", type=3, desc="Front",
     return pic
 
 
-def rewrite(path, comments, pictures):
+def restore(path, entry, pictures):
     """Put back what snapshot() returned: replace every comment and picture."""
+    comments = entry.get("vorbis")
+    if comments is not None:
+        # [[name, value], ...] -- anything else is a damaged or hand-edited entry.
+        if not isinstance(comments, list) or not all(
+                isinstance(c, list) and len(c) == 2
+                and all(isinstance(x, str) for x in c) for c in comments):
+            raise ValueError("the Vorbis comments in the backup are malformed")
     audio = FLAC(path)
     audio.clear_pictures()
-    for item in pictures:
-        audio.add_picture(_picture(**item))
+    for pic in pictures:
+        extra = {}
+        for field in ("width", "height", "depth", "colors"):
+            try:
+                extra[field] = int(pic["item"].get(field, 0))
+            except (TypeError, ValueError):
+                extra[field] = 0
+        audio.add_picture(_picture(pic["data"], pic["mime"], pic["type"],
+                                   pic["desc"], **extra))
     if comments is None:
         # The file had no Vorbis block before the run; do not leave an empty one.
         audio.save()
@@ -131,10 +144,13 @@ def _drop(tags, names):
             del tags[name]
 
 
-def write(path, *, album=None, title=None, artist=None, album_artist=None,
-          year=None, genre=None, track=None, track_total=None, disc=None,
-          disc_total=None, strip=(), cover=None):
+def write(path, fields, strip, cover, options=None):
     """Apply the plan's fields to one FLAC file; `cover` is JPEG bytes or None."""
+    album, title = fields.get("album"), fields.get("title")
+    artist, album_artist = fields.get("artist"), fields.get("album_artist")
+    year, genre = fields.get("year"), fields.get("genre")
+    track, track_total = fields.get("track"), fields.get("track_total")
+    disc, disc_total = fields.get("disc"), fields.get("disc_total")
     audio = FLAC(path)
     if audio.tags is None:
         audio.add_tags()
