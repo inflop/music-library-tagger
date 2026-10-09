@@ -327,7 +327,9 @@ def load_artwork(art, bdir):
 
 def restore_flac_file(fpath, info, bdir):
     """Rewrite one FLAC file from its backup entry; returns the artwork count."""
-    comments = info.get("vorbis")
+    if "vorbis" not in info:
+        raise ValueError("the FLAC backup entry has no Vorbis comments snapshot")
+    comments = info["vorbis"]
     if comments is not None:
         # [[name, value], ...] -- anything else is a damaged or hand-edited entry.
         if not isinstance(comments, list) or not all(
