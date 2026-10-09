@@ -460,8 +460,10 @@ def select_albums(plan, names=None, limit=None):
     The original plan is not modified.
     """
     albums = plan["albums"]
+    listing = ", ".join(a["album"] for a in albums)
     if limit is not None and limit < 1:
-        raise ValueError("--limit must be 1 or more, not %d" % limit)
+        raise ValueError("--limit must be 1 or more, not %d. Albums in the plan: %s"
+                         % (limit, listing))
 
     def hits(token):
         token = token.strip().lower()
@@ -483,7 +485,7 @@ def select_albums(plan, names=None, limit=None):
                     unknown.append(token.strip())
         if unknown:
             raise ValueError("no such album in the plan: %s. Albums in the plan: %s"
-                             % (", ".join(unknown), ", ".join(a["album"] for a in albums)))
+                             % (", ".join(unknown), listing))
         if not keep:
             # Only blanks or commas: an empty shell variable must not turn "apply these
             # albums" into a run that quietly applies none.
@@ -499,19 +501,26 @@ def select_albums(plan, names=None, limit=None):
 
 
 def new_backup_path(bdir):
-    """tags_backup_<timestamp>.json in `bdir`, numbered if that name (or its _art folder) is taken.
+    """Reserve tags_backup_<timestamp>.json in `bdir`, numbered if the name (or its _art folder) is taken.
 
     The timestamp has one-second resolution, and pilots make several runs in quick
     succession. A shared name would let the second run overwrite the first backup, and
-    with it the way back from the first run.
+    with it the way back from the first run. The file is created here, exclusively,
+    rather than merely checked: otherwise two simultaneous runs could both find the same
+    name free and both write to it. backup_tags() then fills in the reserved file.
     """
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    path = os.path.join(bdir, "tags_backup_%s.json" % stamp)
     n = 1
-    while os.path.exists(path) or os.path.exists(os.path.splitext(path)[0] + "_art"):
+    while True:
+        name = "tags_backup_%s.json" % stamp if n == 1 else "tags_backup_%s_%d.json" % (stamp, n)
+        path = os.path.join(bdir, name)
+        if not os.path.exists(os.path.splitext(path)[0] + "_art"):
+            try:
+                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                return path
+            except FileExistsError:
+                pass
         n += 1
-        path = os.path.join(bdir, "tags_backup_%s_%d.json" % (stamp, n))
-    return path
 
 
 def main():

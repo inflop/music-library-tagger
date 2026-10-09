@@ -143,10 +143,11 @@ class TestSelectAlbums(unittest.TestCase):
             apply_plan.select_albums(empty, None, 1)
         self.assertEqual(apply_plan.select_albums(empty, None, None), empty)   # no filter: as before
 
-    def test_a_limit_below_one_is_an_error(self):
+    def test_a_limit_below_one_is_an_error_that_lists_the_albums(self):
         for bad in (0, -1):
-            with self.subTest(limit=bad), self.assertRaises(ValueError):
+            with self.subTest(limit=bad), self.assertRaises(ValueError) as caught:
                 apply_plan.select_albums(self.plan, None, bad)
+            self.assertIn("Discipline", str(caught.exception))
 
 
 class TestCommandLine(Library):
@@ -193,6 +194,7 @@ class TestCommandLine(Library):
     def test_a_bad_limit_changes_nothing(self):
         done = self.run_script("--limit", "0")
         self.assertEqual(done.returncode, 2)
+        self.assertIn("Discipline", done.stderr)          # what the plan does contain
         self.assertEqual(self.tagged(), [])
 
     def test_the_filter_is_refused_with_restore_instead_of_being_ignored(self):
@@ -219,6 +221,17 @@ class TestBackupNames(Library):
             third = apply_plan.new_backup_path(str(self.backups))
         self.assertEqual(len({first, second, third}), 3)
         self.assertTrue(first.endswith("tags_backup_20260101_000000.json"))
+
+    def test_the_name_is_reserved_so_concurrent_runs_cannot_share_it(self):
+        # Checking that a name is free and creating the file later leaves a window in which
+        # two simultaneous runs both pick the same name and the second overwrites the first.
+        # The file is created, exclusively, as part of choosing the name.
+        self.backups.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(apply_plan.time, "strftime", return_value="20260101_000000"):
+            first = apply_plan.new_backup_path(str(self.backups))
+            second = apply_plan.new_backup_path(str(self.backups))   # nothing written in between
+        self.assertNotEqual(first, second)
+        self.assertTrue(os.path.exists(first) and os.path.exists(second))
 
     def test_two_pilots_in_the_same_second_keep_both_backups(self):
         # Pilots make several runs in quick succession likely. A shared name would let the

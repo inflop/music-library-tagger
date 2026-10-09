@@ -15,7 +15,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--dry-run`.
 - A backup no longer overwrites an earlier one: `tags_backup_<timestamp>.json` has one-second
   resolution, so two runs in the same second (likely with pilots) shared a name and the second erased
-  the first run's way back. A number is appended when the name or its `_art` folder is taken.
+  the first run's way back. A number is appended when the name or its `_art` folder is taken, and
+  the file is created exclusively when the name is chosen, so two simultaneous runs cannot pick the same one.
 
 ### Fixed
 - `apply_plan.py --restore <backup> --dry-run` no longer performs a real restore (#4). `main()` returned
