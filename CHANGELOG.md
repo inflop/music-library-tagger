@@ -6,6 +6,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `fetch_cover.py` keeps at least 1.1 s between any two requests to MusicBrainz (#5). The strict
+  query and its loose fallback ran back to back, which broke the ~1 request per second rule
+  that `CONTRIBUTING.md` treats as non-negotiable. The wait now lives in `_get()`, so retries
+  and the release lookup are covered too; the Cover Art Archive is not throttled.
+
 ## [1.1.0] - 2026-10-09
 
 ### Added
