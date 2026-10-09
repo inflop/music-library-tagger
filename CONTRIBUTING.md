@@ -35,8 +35,10 @@ Any change must preserve these, or it will not be merged:
 
 ## Scope
 
-In scope: MP3/ID3 correctness, cover art, multi-disc handling, music-server compatibility.
+In scope: MP3/ID3 and FLAC/Vorbis-comment correctness, cover art, multi-disc handling,
+music-server compatibility. FLAC-specific code lives in `scripts/flac_tags.py`.
 
-Out of scope (for now): FLAC/Vorbis/MP4 tag formats, transcoding, downloading music,
-library-wide multi-artist runs. FLAC support is welcome as a PR but needs its own tag
-abstraction — open an issue first.
+Out of scope (for now): MP4/M4A, Ogg Vorbis and Opus tag formats (they are reported as
+skipped by `analyze.py`, never touched), transcoding, downloading music, library-wide
+multi-artist runs. A new tag format needs its own module like `flac_tags.py` — open an
+issue first.

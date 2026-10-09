@@ -6,6 +6,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- FLAC support (#9). `analyze.py` reads FLAC Vorbis comments and embedded pictures next to
+  MP3/ID3, and `apply_plan.py` writes, backs up and restores them. A folder may mix both
+  formats. `plan.json` is unchanged; `id3_version` is ignored for FLAC and `strip_frames`
+  accepts ID3 frame ids (`COMM`, `TENC`, ...) or Vorbis field names.
+- `analyze.py` lists audio it cannot tag (`.m4a`, `.ogg`, `.opus`, `.wav`, ...) under
+  `skipped_audio` in the JSON and in a `SKIPPED AUDIO` section of the report, instead of
+  silently leaving those albums out. The JSON also gains `formats` and a per-track `format`.
+
+### Changed
+- Backup entries for FLAC files carry `"format": "flac"` and a `vorbis` list of
+  `[name, value]` pairs. Entries without `format` are read as ID3, so existing backups
+  still restore.
+- `analyze.py` labels the album line `album tag:` instead of `TALB:` and reports
+  `TAG FIELDS PRESENT` for both ID3 frames and Vorbis fields.
+
 ## [1.0.1] - 2026-08-31
 
 ### Fixed

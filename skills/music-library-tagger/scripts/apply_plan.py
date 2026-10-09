@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Apply a tagging plan (plan.json) to an MP3 library, or restore from a backup.
+Apply a tagging plan (plan.json) to an MP3 / FLAC library, or restore from a backup.
 
 Before writing, backs up every text frame and every embedded cover of the files
 it is about to touch, so --restore can undo the run. Artwork is copied out to a
 sidecar folder next to the backup JSON and re-embedded verbatim.
+
+FLAC files (see flac_tags.py) are handled the same way with Vorbis comments and
+Picture blocks: the backup stores every comment as a [name, value] pair, and a
+restore replaces all comments and pictures with them. A FLAC that had no comment
+block ends up without one. The plan is the same for both formats; options.id3_version
+only applies to MP3, and options.strip_frames takes ID3 ids (mapped to Vorbis
+fields for FLAC) or Vorbis field names.
 
 Frames that are not text frames (POPM ratings, UFID identifiers, USLT lyrics,
 PRIV...) are neither backed up nor rewritten: apply() does not touch them and
@@ -19,7 +26,7 @@ and a file that had only ID3v1 keeps just its ID3v1.
 Note that ID3v2.3 cannot store several values in one frame, so writing a v2.3
 tag joins them with "/" -- a property of the format, not of the backup, which
 keeps the values apart.
-Only ID3 tags and artwork are touched -- the audio stream is never re-encoded.
+Only tags and artwork are touched -- the audio stream is never re-encoded.
 
 Usage:
     python apply_plan.py --plan plan.json [--dry-run]
