@@ -90,6 +90,11 @@ class BackendContract(unittest.TestCase):
                 yield kind
 
     # -- registry ----------------------------------------------------------
+    def test_every_registered_backend_has_a_fixture(self):
+        # The contract tests only run for formats that have a factory, so a backend
+        # added to BACKENDS without one would silently skip all of them.
+        self.assertEqual({b.NAME for b in tagio.BACKENDS}, set(FACTORIES))
+
     def test_registry_resolves_every_fixture_extension(self):
         for kind, (ext, _, _) in FACTORIES.items():
             backend = tagio.backend_for("Some Track" + ext.upper())
