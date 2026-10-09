@@ -73,6 +73,13 @@ class BackendContract(unittest.TestCase):
             return fn(*args)
 
     @staticmethod
+    def output_of(fn, *args):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            fn(*args)
+        return buf.getvalue()
+
+    @staticmethod
     def summary(path):
         s = tagio.backend_for(path).read_summary(path)
         return dict(s, fields=sorted(s["fields"]), comments=sorted(s["comments"]))
@@ -125,6 +132,18 @@ class BackendContract(unittest.TestCase):
             for p in paths:
                 self.assertEqual(Path(p).read_bytes()[-len(payload):], payload)
 
+    def test_apply_refuses_a_target_that_is_not_audio(self):
+        # mutagen would happily prepend an ID3 tag to any file it is handed.
+        for kind in self.each_kind():
+            plan, paths, _, _ = self.library(kind)
+            victim = os.path.join(os.path.dirname(paths[0]), "settings.cfg")
+            Path(victim).write_bytes(b"key = value")
+            plan["albums"][0]["discs"][0]["tracks"].append(
+                {"file": "settings.cfg", "track": 3, "title": "x"})
+            out = self.output_of(apply_plan.apply, plan, False)
+            self.assertIn("not a supported audio file", out)
+            self.assertEqual(Path(victim).read_bytes(), b"key = value")
+
     def test_dry_run_changes_nothing(self):
         for kind in self.each_kind():
             plan, paths, _, _ = self.library(kind)
@@ -166,6 +185,25 @@ class BackendContract(unittest.TestCase):
             else:
                 self.assertEqual(entry["format"], kind)
             self.assertTrue(entry["had_apic"])
+
+    def test_restore_refuses_an_entry_that_lost_its_tag_payload(self):
+        # A backup entry with no tag snapshot must not be read as "the file had no
+        # tags", which would wipe the tags the file has now.
+        for kind in self.each_kind():
+            if kind == tagio.LEGACY_FORMAT:
+                continue  # entries from before other formats existed
+            plan, paths, _, backup = self.library(kind)
+            self.quiet(apply_plan.backup_tags, plan["root"], plan, backup)
+            self.quiet(apply_plan.apply, plan, False)
+            data = json.loads(Path(backup).read_text(encoding="utf-8"))
+            for rel, entry in data["files"].items():
+                data["files"][rel] = {k: v for k, v in entry.items()
+                                      if k in ("format", "had_apic", "apic")}
+            Path(backup).write_text(json.dumps(data), encoding="utf-8")
+            before = [Path(p).read_bytes() for p in paths]
+            out = self.output_of(apply_plan.restore, backup)
+            self.assertIn("could not restore", out)
+            self.assertEqual([Path(p).read_bytes() for p in paths], before)
 
     def test_restore_skips_an_entry_written_for_another_format(self):
         kinds = list(FACTORIES)

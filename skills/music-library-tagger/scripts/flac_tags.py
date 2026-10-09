@@ -105,7 +105,11 @@ def _picture(data, mime="image/jpeg", type=3, desc="Front",
 
 def restore(path, entry, pictures):
     """Put back what snapshot() returned: replace every comment and picture."""
-    comments = entry.get("vorbis")
+    if "vorbis" not in entry:
+        # Not the same as "the file had no comments" (None): reading it that way
+        # would wipe the comments the file has now.
+        raise ValueError("the FLAC backup entry has no Vorbis comments snapshot")
+    comments = entry["vorbis"]
     if comments is not None:
         # [[name, value], ...] -- anything else is a damaged or hand-edited entry.
         if not isinstance(comments, list) or not all(
