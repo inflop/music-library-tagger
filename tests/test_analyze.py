@@ -2,11 +2,13 @@
 
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -247,6 +249,28 @@ class TestCoverDirs(unittest.TestCase):
                 self.assertEqual(self.names()[0], "Album")
                 (self.folder / spelling).rmdir()
 
+    def test_two_spellings_of_one_real_folder_are_listed_once_on_any_filesystem(self):
+        # The loop above only meets a duplicate on a case-insensitive filesystem. Make
+        # every filesystem look like one: 'covers' and 'Covers' both exist and resolve to
+        # the same real folder, as they do on NTFS. Without the real-path dedup the
+        # folder would be scanned (and its images listed) twice.
+        shared = str(self.folder / "covers")
+        real_isdir, real_realpath = os.path.isdir, os.path.realpath
+
+        def isdir(path):
+            return Path(path).name.lower() == "covers" or real_isdir(path)
+
+        def realpath(path, *args, **kwargs):
+            if Path(path).name.lower() == "covers":
+                return shared
+            return real_realpath(path, *args, **kwargs)
+
+        with mock.patch.object(analyze.os.path, "isdir", isdir), \
+                mock.patch.object(analyze.os.path, "realpath", realpath):
+            found = analyze.cover_dirs(str(self.folder))
+        covers = [d for d in found if Path(d).name.lower() == "covers"]
+        self.assertEqual(len(covers), 1, found)
+
     def test_other_artwork_folder_names_are_recognised(self):
         for name in ("Scans", "scans", "Artwork", "artwork", "Cover", "cover"):
             with self.subTest(name=name):
@@ -346,6 +370,8 @@ class TestAlbumGrouping(unittest.TestCase):
         by_path = {a["album_path"]: a for a in self.analyze()["albums"]}
         box, single = by_path["Box"], by_path["Single"]
         self.assertEqual([c["name"] for c in box["album_level_covers"]], ["cover.jpg"])
+        album_cover = box["album_level_covers"][0]
+        self.assertEqual((album_cover["w"], album_cover["h"]), (40, 30))
         cd1 = box["discs"][0]
         self.assertEqual([c["name"] for c in cd1["covers"]], ["front.jpg"])
         self.assertEqual((cd1["covers"][0]["w"], cd1["covers"][0]["h"]), (40, 30))
